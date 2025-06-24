@@ -1,11 +1,10 @@
 # Transport Services
 
 [![Swift 6.1](https://img.shields.io/badge/Swift-6.1-orange.svg)](https://swift.org)
-[![Platforms](https://img.shields.io/badge/Platforms-macOS%20|%20Linux%20|%20Android-blue.svg)](https://swift.org)
+[![Platforms](https://img.shields.io/badge/Platforms-macOS%20|%20Linux-blue.svg)](https://swift.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![macOS](https://img.shields.io/github/actions/workflow/status/edgeengineer/transport-services/swift.yml?branch=main&label=macOS)](https://github.com/edgeengineer/transport-services/actions/workflows/swift.yml)
 [![Linux](https://img.shields.io/github/actions/workflow/status/edgeengineer/transport-services/swift.yml?branch=main&label=Linux)](https://github.com/edgeengineer/transport-services/actions/workflows/swift.yml)
-[![Windows](https://img.shields.io/github/actions/workflow/status/edgeengineer/transport-services/swift.yml?branch=main&label=Windows)](https://github.com/edgeengineer/transport-services/actions/workflows/swift.yml)
 [![Documentation](https://img.shields.io/badge/Documentation-DocC-blue)](https://edgeengineer.github.io/transport-services/documentation/transportservices/)
 
 `TransportServices` is a modern, protocol-agnostic networking framework for Swift, built on the principles of the IETF Transport Services (TAPS) architecture. It provides a high-level, asynchronous, and message-oriented API that allows applications to express their networking *intent* rather than being hard-coded to a specific transport protocol like TCP or UDP.
@@ -40,6 +39,7 @@ This library implements the abstract API defined in **[`spec/rfc9622.txt`](spec/
 - [Quick Start](#quick-start)
   - [Client Example: Connecting to a Service](#1-client-example-connecting-to-a-service)
   - [Server Example: Listening for Connections](#2-server-example-listening-for-connections)
+- [Documentation](#documentation)
 - [Advanced Usage](#advanced-usage)
 - [License](#license)
 
@@ -160,6 +160,27 @@ for await newConnection in listener.connections {
     }
 }
 ```
+
+## Documentation
+
+### 📚 [API Guide](API_GUIDE.md)
+
+Comprehensive guide covering:
+- Core concepts and architecture
+- Complete API reference
+- Advanced features (Rendezvous, Connection Groups, Multicast, 0-RTT)
+- Best practices and performance tips
+- Migration guides from BSD sockets, URLSession, and Network.framework
+
+### 🧪 [Examples](Examples/README.md)
+
+Practical, runnable examples demonstrating:
+- Basic client/server connections
+- Peer-to-peer with NAT traversal
+- Connection groups and multistreaming
+- Multicast communication
+- Custom security callbacks
+- 0-RTT optimization techniques
 
 ## Advanced Usage
 

@@ -1,0 +1,115 @@
+name: Swift
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        swift: ['6.1']
+        include:
+          - os: ubuntu-latest
+            platform: Linux
+          - os: macos-latest
+            platform: macOS
+    
+    runs-on: ${{ matrix.os }}
+    
+    name: ${{ matrix.platform }} Swift ${{ matrix.swift }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Swift
+      uses: swift-actions/setup-swift@v2
+      with:
+        swift-version: ${{ matrix.swift }}
+    
+    - name: Get Swift Version
+      run: swift --version
+    
+    - name: Build
+      run: swift build -v
+    
+    - name: Run Tests
+      run: swift test -v --enable-code-coverage
+    
+    - name: Generate Coverage Report (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        llvm-cov export -format="lcov" \
+          .build/debug/TransportServicesPackageTests.xctest \
+          -instr-profile .build/debug/codecov/default.profdata \
+          > coverage.lcov
+    
+    - name: Generate Coverage Report (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        xcrun llvm-cov export -format="lcov" \
+          .build/debug/TransportServicesPackageTests.xctest/Contents/MacOS/TransportServicesPackageTests \
+          -instr-profile .build/debug/codecov/default.profdata \
+          > coverage.lcov
+    
+    - name: Upload Coverage to Codecov
+      if: github.event_name == 'push'
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.lcov
+        flags: ${{ matrix.platform }}
+        name: ${{ matrix.platform }}-coverage
+        fail_ci_if_error: false
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Swift
+      uses: swift-actions/setup-swift@v2
+      with:
+        swift-version: '6.1'
+    
+    - name: Install SwiftLint
+      run: |
+        git clone https://github.com/realm/SwiftLint.git
+        cd SwiftLint
+        swift build -c release
+        cp .build/release/swiftlint /usr/local/bin/
+        cd ..
+        rm -rf SwiftLint
+    
+    - name: Run SwiftLint
+      run: swiftlint lint --reporter github-actions-logging
+
+  documentation:
+    runs-on: macos-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Swift
+      uses: swift-actions/setup-swift@v2
+      with:
+        swift-version: '6.1'
+    
+    - name: Build Documentation
+      run: |
+        swift package --allow-writing-to-directory ./docs \
+          generate-documentation --target TransportServices \
+          --output-path ./docs \
+          --transform-for-static-hosting \
+          --hosting-base-path transport-services
+    
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./docs
