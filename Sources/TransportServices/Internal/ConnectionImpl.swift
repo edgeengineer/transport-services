@@ -251,7 +251,7 @@ actor ConnectionImpl {
             }
             
             // Add message framing handler
-            let framingHandler = MessageFramingHandler(framers: framers)
+            let framingHandler = SimpleFramingHandler()
             future = future.flatMap { channel.pipeline.addHandler(framingHandler) }
             
             // Add the main connection handler
@@ -426,39 +426,6 @@ actor ConnectionImpl {
 }
 
 // MARK: - Channel Handlers
-
-/// Handles message framing for the connection
-private final class MessageFramingHandler: ChannelDuplexHandler, @unchecked Sendable {
-    typealias InboundIn = ByteBuffer
-    typealias InboundOut = Message
-    typealias OutboundIn = Message
-    typealias OutboundOut = ByteBuffer
-    
-    private let framers: [any MessageFramer]
-    
-    init(framers: [any MessageFramer]) {
-        self.framers = framers
-    }
-    
-    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        let buffer = unwrapInboundIn(data)
-        
-        // For now, treat the entire buffer as a message
-        // Full implementation would use framers to delimit messages
-        let message = Message(Data(buffer.readableBytesView))
-        
-        context.fireChannelRead(wrapInboundOut(message))
-    }
-    
-    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
-        let message = unwrapOutboundIn(data)
-        
-        var buffer = context.channel.allocator.buffer(capacity: message.data.count)
-        buffer.writeBytes(message.data)
-        
-        context.write(wrapOutboundOut(buffer), promise: promise)
-    }
-}
 
 /// Main handler for connection events
 private final class ConnectionHandler: ChannelInboundHandler, @unchecked Sendable {

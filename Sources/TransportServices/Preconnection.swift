@@ -353,11 +353,14 @@ public final class Preconnection: @unchecked Sendable {
             )
         }
         
-        // Implementation would:
-        // 1. Bind to local endpoints
-        // 2. Configure protocol stacks
-        // 3. Start accepting connections
-        throw TransportError.establishmentFailure("Not implemented")
+        // Use the Transport Services implementation to create the listener
+        return try await TransportServicesImpl.shared.listen(
+            localEndpoints: localEndpoints,
+            remoteEndpoints: remoteEndpoints,
+            properties: transportProperties,
+            securityParameters: securityParameters,
+            framers: framers
+        )
     }
     
     /// Establishes a peer-to-peer Connection using simultaneous open.

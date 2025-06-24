@@ -125,9 +125,23 @@ actor TransportServicesImpl {
                 securityParameters: SecurityParameters,
                 framers: [any MessageFramer]) async throws -> Listener {
         
-        // Implementation would create a server bootstrap
-        // and return a Listener that accepts connections
-        throw TransportError.establishmentFailure("Listen not yet implemented")
+        // Create the listener implementation
+        let listenerImpl = ListenerImpl(
+            localEndpoints: localEndpoints,
+            remoteEndpoints: remoteEndpoints,
+            properties: properties,
+            securityParameters: securityParameters,
+            framers: framers,
+            eventLoopGroup: eventLoopGroup
+        )
+        
+        // Start the listener and get the connection stream
+        let connectionStream = try await listenerImpl.start()
+        
+        // Create the public Listener with the stream
+        let listener = Listener(impl: listenerImpl, stream: connectionStream)
+        
+        return listener
     }
     
     /// Performs a rendezvous connection
@@ -176,10 +190,3 @@ actor TransportServicesImpl {
     }
 }
 
-// Extension to add internal bridge setter
-extension Connection {
-    /// Internal method to set the bridge
-    internal func setBridge(_ bridge: ConnectionBridge) async {
-        self._bridge = bridge
-    }
-}

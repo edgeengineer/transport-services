@@ -1,4 +1,9 @@
 import Testing
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
+import Foundation
+#endif
 @testable import TransportServices
 
 @Test func preferenceEnum() {
@@ -8,7 +13,7 @@ import Testing
 }
 
 @Test func endpointCreation() {
-    let endpoint = Endpoint(kind: .host("example.com"))
+    var endpoint = Endpoint(kind: .host("example.com"))
     endpoint.port = 443
     #expect(endpoint.port == 443)
 }

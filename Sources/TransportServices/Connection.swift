@@ -56,6 +56,11 @@ public actor Connection: CustomStringConvertible, Sendable {
         self._id = UUID()
     }
     
+    /// Internal method to set the bridge
+    internal func setBridge(_ bridge: ConnectionBridge) async {
+        self._bridge = bridge
+    }
+    
     // MARK: - Identity & State
     
     /// The unique identifier for this connection.
@@ -192,7 +197,9 @@ public actor Connection: CustomStringConvertible, Sendable {
     ///
     /// - Note: The stream automatically handles back-pressure by pausing when not consumed.
     public var incomingMessages: AsyncThrowingStream<Message,Error> { 
-        _bridge?.createIncomingMessageStream() ?? AsyncThrowingStream { _ in }
+        get async {
+            _bridge?.createIncomingMessageStream() ?? AsyncThrowingStream { _ in }
+        }
     }
     
     // MARK: - Connection Groups

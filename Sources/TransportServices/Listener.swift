@@ -94,6 +94,26 @@ public actor Listener: Sendable {
     
     // MARK: - Properties
     
+    /// The internal implementation
+    private let impl: ListenerImpl?
+    
+    /// The stream of incoming connections
+    private let stream: AsyncThrowingStream<Connection, Error>?
+    
+    // MARK: - Initialization
+    
+    /// Internal initializer
+    internal init(impl: ListenerImpl, stream: AsyncThrowingStream<Connection, Error>) {
+        self.impl = impl
+        self.stream = stream
+    }
+    
+    /// Public initializer for testing
+    public init() {
+        self.impl = nil
+        self.stream = nil
+    }
+    
     /// An asynchronous stream of incoming Connections.
     ///
     /// Each Connection delivered through this stream is already in the
@@ -123,8 +143,8 @@ public actor Listener: Sendable {
     /// ```
     ///
     /// - Note: The stream completes when the Listener is stopped.
-    public var newConnections: AsyncThrowingStream<Connection, Error> { 
-        AsyncThrowingStream { _ in }
+    public nonisolated var newConnections: AsyncThrowingStream<Connection, Error> { 
+        stream ?? AsyncThrowingStream { _ in }
     }
     
     // MARK: - Methods
@@ -144,11 +164,7 @@ public actor Listener: Sendable {
     /// - Note: This operation is idempotent; calling stop() multiple times
     ///   has no additional effect.
     public func stop() async {
-        // Implementation would:
-        // 1. Stop accepting new connections
-        // 2. Close listening sockets
-        // 3. Complete the newConnections stream
-        // 4. Generate Stopped event
+        await impl?.stop()
     }
     
     /// Sets a limit on the number of Connections that will be delivered.
@@ -184,11 +200,7 @@ public actor Listener: Sendable {
     /// - Note: The limit only affects new Connection delivery. Existing
     ///   Connections and those already in the delivery queue are unaffected.
     public func setNewConnectionLimit(_ limit: Int?) async {
-        // Implementation would:
-        // 1. Store the limit value
-        // 2. If nil, set to infinite
-        // 3. If 0, pause connection delivery
-        // 4. Resume delivery if increasing from 0
+        await impl?.setConnectionLimit(limit)
     }
 }
 
