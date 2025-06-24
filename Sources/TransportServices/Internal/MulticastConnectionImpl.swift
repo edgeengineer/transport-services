@@ -129,10 +129,10 @@ actor MulticastConnectionImpl {
         switch multicastEndpoint.type {
         case .anySource:
             // Join for any source
-            print("Joining ASM group \(multicastEndpoint.groupAddress)")
-        case .sourceSpecific(let sources):
+            break
+        case .sourceSpecific(_):
             // Join with source filter (IP_ADD_SOURCE_MEMBERSHIP)
-            print("Joining SSM group \(multicastEndpoint.groupAddress) from sources: \(sources)")
+            break
         }
     }
     

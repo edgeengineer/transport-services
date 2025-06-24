@@ -78,9 +78,8 @@ final class SecurityCallbackHandler: @unchecked Sendable {
             return .certificateVerified
         case .reject:
             return .failed
-        case .acceptWithConditions(let conditions):
-            // Log conditions but accept for now
-            print("Certificate accepted with conditions: \(conditions)")
+        case .acceptWithConditions(_):
+            // Accept with conditions
             return .certificateVerified
         }
     }
@@ -135,7 +134,6 @@ extension SecurityCallbackHandler {
                 let key = try NIOSSLPrivateKey(bytes: Array(result.privateKey), format: .der)
                 return (cert, key)
             } catch {
-                print("Failed to create certificate/key: \(error)")
                 return nil
             }
         }

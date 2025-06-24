@@ -56,7 +56,7 @@ import PackageDescription
 let package = Package(
     name: "YourProject",
     dependencies: [
-        .package(url: "https://github.com/edgeengineer/transport-services", from: "0.0.1")
+        .package(url: "https://github.com/edgeengineer/transport-services", from: "0.0.2")
     ],
     targets: [
         .target(

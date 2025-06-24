@@ -111,8 +111,7 @@ actor RendezvousImpl {
             listeners.append(channel)
             
         } catch {
-            // Log error but continue with other endpoints
-            print("Failed to start listener on \(localEndpoint): \(error)")
+            // Continue with other endpoints on error
         }
     }
     
