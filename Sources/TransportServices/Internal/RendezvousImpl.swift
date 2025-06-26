@@ -106,6 +106,9 @@ actor RendezvousImpl {
                 channel = try await bootstrap.bind(host: hostname, port: Int(localEndpoint.port ?? 0)).get()
             case .ip(let address):
                 channel = try await bootstrap.bind(host: address, port: Int(localEndpoint.port ?? 0)).get()
+            case .bluetoothPeripheral(_, _), .bluetoothService(_, _):
+                // Bluetooth rendezvous is not yet implemented
+                throw TransportError.establishmentFailure("Bluetooth rendezvous not yet implemented")
             }
             
             listeners.append(channel)
@@ -208,6 +211,9 @@ actor RendezvousImpl {
             let connection = Connection()
             await connection.setBridge(bridge)
             
+            // Set the public connection reference on the impl
+            await impl.setPublicConnection(connection)
+            
             // First successful connection wins
             await self.handleSuccessfulConnection(connection)
             
@@ -241,6 +247,9 @@ actor RendezvousImpl {
         let bridge = ConnectionBridge(impl: impl)
         let connection = Connection()
         await connection.setBridge(bridge)
+        
+        // Set the public connection reference on the impl
+        await impl.setPublicConnection(connection)
         
         await handleSuccessfulConnection(connection)
     }

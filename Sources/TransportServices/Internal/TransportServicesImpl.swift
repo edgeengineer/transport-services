@@ -78,6 +78,10 @@ actor TransportServicesImpl {
         let bridge = ConnectionBridge(impl: impl)
         let connection = Connection()
         await connection.setBridge(bridge)
+        
+        // Set the public connection reference on the impl
+        await impl.setPublicConnection(connection)
+        
         return connection
     }
     
@@ -115,6 +119,10 @@ actor TransportServicesImpl {
         let bridge = ConnectionBridge(impl: impl)
         let connection = Connection()
         await connection.setBridge(bridge)
+        
+        // Set the public connection reference on the impl
+        await impl.setPublicConnection(connection)
+        
         return connection
     }
     

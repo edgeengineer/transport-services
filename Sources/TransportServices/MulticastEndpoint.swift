@@ -108,6 +108,8 @@ extension Endpoint {
             return isMulticastAddress(address)
         case .host:
             return false
+        case .bluetoothPeripheral(_, _), .bluetoothService(_, _):
+            return false
         }
     }
     

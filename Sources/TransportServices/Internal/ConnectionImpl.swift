@@ -33,6 +33,9 @@ actor ConnectionImpl {
     /// The event loop group managing this connection
     private let eventLoopGroup: EventLoopGroup
     
+    /// Transport stack manager for protocol selection
+    private let stackManager: TransportStackManager
+    
     /// The current state of the connection
     private var _state: ConnectionState = .establishing
     
@@ -54,6 +57,12 @@ actor ConnectionImpl {
     /// Connection group this connection belongs to
     private weak var connectionGroup: ConnectionGroup?
     
+    /// The public Connection reference (set after creation)
+    private weak var publicConnection: Connection?
+    
+    /// Framing handler reference for setting connection later
+    private var framingHandler: ConfiguredFramingHandler?
+    
     // MARK: - Initialization
     
     init(id: UUID,
@@ -66,6 +75,7 @@ actor ConnectionImpl {
         self.securityParameters = securityParameters
         self.framers = framers
         self.eventLoopGroup = eventLoopGroup
+        self.stackManager = TransportStackManager(eventLoopGroup: eventLoopGroup as! MultiThreadedEventLoopGroup)
     }
     
     // MARK: - State Management
@@ -80,6 +90,28 @@ actor ConnectionImpl {
     
     var localEndpoint: LocalEndpoint? {
         _localEndpoint
+    }
+    
+    /// Sets the public Connection reference
+    func setPublicConnection(_ connection: Connection) async {
+        self.publicConnection = connection
+        
+        // If we have a framing handler, update it with the connection
+        if let framingHandler = framingHandler {
+            await framingHandler.setConnection(connection)
+        }
+    }
+    
+    /// Sets the framing handler reference
+    private func setFramingHandler(_ handler: ConfiguredFramingHandler) {
+        self.framingHandler = handler
+        
+        // If we already have a public connection, set it on the handler
+        if let connection = publicConnection {
+            Task {
+                await handler.setConnection(connection)
+            }
+        }
     }
     
     // MARK: - Connection Establishment
@@ -115,28 +147,24 @@ actor ConnectionImpl {
         self._remoteEndpoint = remoteEndpoint
         self._localEndpoint = localEndpoint
         
-        // For now, we'll implement a basic TCP connection
-        // Full implementation will support protocol selection based on properties
-        
         do {
-            let bootstrap = ClientBootstrap(group: eventLoopGroup)
-                .channelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-                .channelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: properties.disableNagle ? 1 : 0)
-                .channelInitializer(makeChannelInitializer())
+            // Use TransportStackManager to handle all protocol types
+            let channel = try await stackManager.connect(
+                to: remoteEndpoint,
+                from: localEndpoint,
+                with: properties
+            )
             
-            // Connect to the remote endpoint
-            let channel = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Channel, Error>) in
-                let connectFuture: EventLoopFuture<Channel>
-                
-                switch remoteEndpoint.kind {
-                case .host(let hostname):
-                    connectFuture = bootstrap.connect(host: hostname, port: Int(remoteEndpoint.port ?? 0))
-                case .ip(let address):
-                    connectFuture = bootstrap.connect(host: address, port: Int(remoteEndpoint.port ?? 0))
+            // Add channel handlers if it's an IP connection
+            if case .host = remoteEndpoint.kind {
+                let handlers = makeChannelHandlers()
+                for handler in handlers {
+                    _ = try await channel.pipeline.addHandler(handler).get()
                 }
-                
-                connectFuture.whenComplete { result in
-                    continuation.resume(with: result)
+            } else if case .ip = remoteEndpoint.kind {
+                let handlers = makeChannelHandlers()
+                for handler in handlers {
+                    _ = try await channel.pipeline.addHandler(handler).get()
                 }
             }
             
@@ -168,7 +196,7 @@ actor ConnectionImpl {
         let capturedMessage = firstMessage
         
         do {
-            let bootstrap = ClientBootstrap(group: eventLoopGroup)
+            let _ = ClientBootstrap(group: eventLoopGroup)
                 .channelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
                 .channelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: properties.disableNagle ? 1 : 0)
                 .channelInitializer(makeChannelInitializer())
@@ -179,19 +207,23 @@ actor ConnectionImpl {
                 // This is platform-specific and requires additional setup
             }
             
-            // Connect to the remote endpoint
-            let channel = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Channel, Error>) in
-                let connectFuture: EventLoopFuture<Channel>
-                
-                switch remoteEndpoint.kind {
-                case .host(let hostname):
-                    connectFuture = bootstrap.connect(host: hostname, port: Int(remoteEndpoint.port ?? 0))
-                case .ip(let address):
-                    connectFuture = bootstrap.connect(host: address, port: Int(remoteEndpoint.port ?? 0))
+            // Use TransportStackManager to handle all protocol types
+            let channel = try await stackManager.connect(
+                to: remoteEndpoint,
+                from: localEndpoint,
+                with: properties
+            )
+            
+            // Add channel handlers if it's an IP connection
+            if case .host = remoteEndpoint.kind {
+                let handlers = makeChannelHandlers()
+                for handler in handlers {
+                    _ = try await channel.pipeline.addHandler(handler).get()
                 }
-                
-                connectFuture.whenComplete { result in
-                    continuation.resume(with: result)
+            } else if case .ip = remoteEndpoint.kind {
+                let handlers = makeChannelHandlers()
+                for handler in handlers {
+                    _ = try await channel.pipeline.addHandler(handler).get()
                 }
             }
             
@@ -214,10 +246,43 @@ actor ConnectionImpl {
         }
     }
     
+    /// Creates channel handlers
+    private func makeChannelHandlers() -> [ChannelHandler] {
+        var handlers: [ChannelHandler] = []
+        
+        // Add TLS if required
+        if !securityParameters.allowedProtocols.isEmpty {
+            // TLS handler would be added here in a real implementation
+        }
+        
+        // Add message framing handler based on configured framers
+        let framingHandler = createFramingHandler()
+        handlers.append(framingHandler)
+        
+        // Add the main connection handler
+        handlers.append(ConnectionHandler(impl: self))
+        
+        return handlers
+    }
+    
+    /// Creates the appropriate framing handler based on configured framers
+    private func createFramingHandler() -> ChannelHandler {
+        if framers.isEmpty {
+            // No custom framers - use simple length-prefix framing
+            return SimpleFramingHandler()
+        } else {
+            // Use ConfiguredFramingHandler with the configured framers
+            // Store reference so we can set the connection later
+            let handler = ConfiguredFramingHandler(framers: framers, connection: publicConnection)
+            self.framingHandler = handler
+            return handler
+        }
+    }
+    
     /// Creates a channel initializer
     private func makeChannelInitializer() -> @Sendable (Channel) -> EventLoopFuture<Void> {
         // Capture needed values
-        let framers = self.framers
+        let capturedFramers = self.framers
         let securityParams = self.securityParameters 
         let serverHostname = self.getServerHostname()
         let weakSelf = self
@@ -232,10 +297,10 @@ actor ConnectionImpl {
                     
                     // Configure callbacks if provided
                     if securityParams.callbacks.trustVerificationCallback != nil {
-                        let callbackHandler = SecurityCallbackHandler(
+                        let _ = SecurityCallbackHandler(
                             callbacks: securityParams.callbacks,
                             serverName: serverHostname
-                        )
+                        ) // TODO: Integrate callback handler with TLS configuration
                         tlsConfiguration.certificateVerification = .noHostnameVerification
                     }
                     
@@ -250,8 +315,18 @@ actor ConnectionImpl {
                 }
             }
             
-            // Add message framing handler
-            let framingHandler = SimpleFramingHandler()
+            // Add message framing handler based on configured framers
+            let framingHandler: ChannelHandler
+            if capturedFramers.isEmpty {
+                framingHandler = SimpleFramingHandler()
+            } else {
+                let configuredHandler = ConfiguredFramingHandler(framers: capturedFramers)
+                // Store handler reference so we can set connection later
+                Task { [weak weakSelf] in
+                    await weakSelf?.setFramingHandler(configuredHandler)
+                }
+                framingHandler = configuredHandler
+            }
             future = future.flatMap { channel.pipeline.addHandler(framingHandler) }
             
             // Add the main connection handler
@@ -267,6 +342,8 @@ actor ConnectionImpl {
         case .host(let hostname):
             return hostname
         case .ip(_):
+            return nil
+        case .bluetoothPeripheral(_, _), .bluetoothService(_, _):
             return nil
         case .none:
             return nil

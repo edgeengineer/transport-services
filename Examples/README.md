@@ -17,13 +17,14 @@ This directory contains practical examples demonstrating how to use the Transpor
 6. **MulticastExample.swift** - Multicast sender and receiver
 7. **ZeroRTTExample.swift** - 0-RTT connection establishment
 8. **SecurityCallbackExample.swift** - Custom certificate validation
+9. **BluetoothExample.swift** - Bluetooth L2CAP connections and service discovery
 
 ### Use Case Examples
 
-9. **ChatApplication.swift** - Simple chat using reliable messages
-10. **FileTransfer.swift** - Bulk data transfer with progress
-11. **VideoStreaming.swift** - Real-time media streaming
-12. **GameNetworking.swift** - Low-latency game networking
+10. **ChatApplication.swift** - Simple chat using reliable messages
+11. **FileTransfer.swift** - Bulk data transfer with progress
+12. **VideoStreaming.swift** - Real-time media streaming
+13. **GameNetworking.swift** - Low-latency game networking
 
 ## Running the Examples
 

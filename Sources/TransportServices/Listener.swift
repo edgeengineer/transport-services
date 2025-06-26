@@ -100,6 +100,11 @@ public actor Listener: Sendable {
     /// The stream of incoming connections
     private let stream: AsyncThrowingStream<Connection, Error>?
     
+    /// The local endpoint this listener is bound to
+    public var localEndpoint: LocalEndpoint? {
+        impl?.localEndpoints.first
+    }
+    
     // MARK: - Initialization
     
     /// Internal initializer

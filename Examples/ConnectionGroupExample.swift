@@ -1,5 +1,3 @@
-#!/usr/bin/env swift
-
 import TransportServices
 import Foundation
 
@@ -88,7 +86,7 @@ struct ConnectionGroupExample {
             }
             
             // Query grouped connections
-            let allConnections = await primaryConnection.groupedConnections()
+            let allConnections = await primaryConnection.groupedConnections
             print("Total connections in group: \(allConnections.count)")
             
             // Close entire group at once

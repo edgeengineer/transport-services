@@ -114,6 +114,25 @@ public struct Endpoint: Sendable, Hashable {
         /// - IPv6: "2001:db8::1"
         /// - IPv6 link-local: "fe80::1" (requires interface)
         case ip(_ address: String)
+        
+        /// A specific Bluetooth Low Energy peripheral.
+        ///
+        /// Identifies a Bluetooth device by its UUID and L2CAP Protocol/Service Multiplexer (PSM).
+        ///
+        /// - Parameters:
+        ///   - peripheralUUID: The UUID of the Bluetooth peripheral
+        ///   - psm: The L2CAP PSM for the channel
+        case bluetoothPeripheral(peripheralUUID: UUID, psm: UInt16)
+        
+        /// A Bluetooth Low Energy service.
+        ///
+        /// Identifies any peripheral advertising a specific service.
+        /// Optionally includes a PSM for L2CAP channels.
+        ///
+        /// - Parameters:
+        ///   - serviceUUID: The UUID of the Bluetooth service
+        ///   - psm: Optional L2CAP PSM for the channel
+        case bluetoothService(serviceUUID: String, psm: UInt16?)
     }
     
     // MARK: - Properties
@@ -242,6 +261,14 @@ extension Endpoint: CustomStringConvertible {
             } else {
                 components.append(address)
             }
+        case .bluetoothPeripheral(let uuid, let psm):
+            components.append("ble://\(uuid)")
+            components.append("psm:\(psm)")
+        case .bluetoothService(let serviceUUID, let psm):
+            components.append("ble-service://\(serviceUUID)")
+            if let psm = psm {
+                components.append("psm:\(psm)")
+            }
         }
         
         if let port = port {
@@ -283,5 +310,70 @@ extension Endpoint {
         var endpoint = Endpoint(kind: .ip(ipv6 ? "::" : "0.0.0.0"))
         endpoint.port = port
         return endpoint
+    }
+}
+
+// MARK: - Bluetooth Convenience Initializers
+
+extension RemoteEndpoint {
+    /// Creates an endpoint representing a specific Bluetooth peripheral.
+    ///
+    /// This endpoint type is used when you know the exact UUID of the
+    /// peripheral you want to connect to and the L2CAP PSM to use.
+    ///
+    /// - Parameters:
+    ///   - blePeripheral: The UUID of the Bluetooth peripheral
+    ///   - psm: The L2CAP Protocol/Service Multiplexer
+    /// - Returns: A RemoteEndpoint configured for the Bluetooth peripheral
+    ///
+    /// ## Example
+    /// ```swift
+    /// let peripheral = UUID(uuidString: "12345678-1234-1234-1234-123456789012")!
+    /// let endpoint = RemoteEndpoint(blePeripheral: peripheral, psm: 0x0025)
+    /// ```
+    public static func bluetoothPeripheral(_ peripheral: UUID, psm: UInt16) -> RemoteEndpoint {
+        RemoteEndpoint(kind: .bluetoothPeripheral(peripheralUUID: peripheral, psm: psm))
+    }
+    
+    /// Creates an endpoint representing any peripheral advertising a specific service.
+    ///
+    /// This endpoint type is used for service discovery - the framework will
+    /// connect to any peripheral advertising the specified service UUID.
+    ///
+    /// - Parameters:
+    ///   - bleService: The UUID of the Bluetooth service
+    ///   - psm: Optional L2CAP PSM for the channel
+    /// - Returns: A RemoteEndpoint configured for service discovery
+    ///
+    /// ## Example
+    /// ```swift
+    /// // Connect to any device offering a heart rate service
+    /// let endpoint = RemoteEndpoint(bleService: "180D", psm: nil)
+    /// ```
+    public static func bluetoothService(_ serviceUUID: String, psm: UInt16? = nil) -> RemoteEndpoint {
+        RemoteEndpoint(kind: .bluetoothService(serviceUUID: serviceUUID, psm: psm))
+    }
+}
+
+extension LocalEndpoint {
+    /// Creates a local endpoint for listening by publishing an L2CAP channel.
+    ///
+    /// This endpoint type configures a Bluetooth peripheral to listen for
+    /// incoming L2CAP connections on the specified PSM.
+    ///
+    /// - Parameter blePublishedPSM: The L2CAP PSM to publish
+    /// - Returns: A LocalEndpoint configured for Bluetooth listening
+    ///
+    /// ## Example
+    /// ```swift
+    /// // Listen for L2CAP connections on PSM 0x0025
+    /// let endpoint = LocalEndpoint(blePublishedPSM: 0x0025)
+    /// ```
+    ///
+    /// - Note: The PSM value must be an odd number between 0x0001 and 0x007F
+    ///   for dynamically allocated PSMs, or use a registered PSM value.
+    public static func bluetoothPublishedPSM(_ psm: UInt16) -> LocalEndpoint {
+        // For listening, we use a special service UUID to indicate publishing
+        LocalEndpoint(kind: .bluetoothService(serviceUUID: "published", psm: psm))
     }
 }

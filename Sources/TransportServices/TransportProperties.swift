@@ -368,6 +368,27 @@ public struct TransportProperties: Sendable {
     /// initiate connections on alternate paths.
     public var advertisesAltAddr: Bool = false
     
+    /// A preference for using low-power transports when available.
+    ///
+    /// This property guides the Transport Services System to prefer
+    /// energy-efficient transport options like Bluetooth Low Energy
+    /// over higher-power options like Wi-Fi when both are viable.
+    ///
+    /// **Default:** `.noPreference`
+    ///
+    /// **Usage:**
+    /// ```swift
+    /// // Require low-power transport (e.g., Bluetooth only)
+    /// properties.preferLowPower = .require
+    /// 
+    /// // Prefer Bluetooth but fall back to Wi-Fi if needed
+    /// properties.preferLowPower = .prefer
+    /// ```
+    ///
+    /// **Note:** Setting this to `.require` will prevent selection of
+    /// Wi-Fi or cellular transports even if they're the only option.
+    public var preferLowPower: Preference = .noPreference
+    
     // MARK: - Communication Properties
     
     /// Communication directionality for the Connection.

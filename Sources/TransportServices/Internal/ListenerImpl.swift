@@ -33,6 +33,9 @@ actor ListenerImpl {
     /// The event loop group managing this listener
     private let eventLoopGroup: EventLoopGroup
     
+    /// Transport stack manager for protocol selection
+    private let stackManager: TransportStackManager
+    
     /// Connection limit for rate limiting
     private var connectionLimit: Int?
     
@@ -59,6 +62,7 @@ actor ListenerImpl {
         self.securityParameters = securityParameters
         self.framers = framers
         self.eventLoopGroup = eventLoopGroup
+        self.stackManager = TransportStackManager(eventLoopGroup: eventLoopGroup as! MultiThreadedEventLoopGroup)
     }
     
     // MARK: - Lifecycle
@@ -82,7 +86,7 @@ actor ListenerImpl {
     
     private func startListening(on localEndpoint: LocalEndpoint) async {
         do {
-            let bootstrap = ServerBootstrap(group: eventLoopGroup)
+            let _ = ServerBootstrap(group: eventLoopGroup)
                 .serverChannelOption(ChannelOptions.backlog, value: 256)
                 .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
                 .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -100,20 +104,17 @@ actor ListenerImpl {
                     return channel.eventLoop.makeSucceededFuture(())
                 }
             
-            // Bind to the local endpoint
-            let channel = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Channel, Error>) in
-                let bindFuture: EventLoopFuture<Channel>
-                
-                switch localEndpoint.kind {
-                case .host(let hostname):
-                    bindFuture = bootstrap.bind(host: hostname, port: Int(localEndpoint.port ?? 0))
-                case .ip(let address):
-                    bindFuture = bootstrap.bind(host: address, port: Int(localEndpoint.port ?? 0))
-                }
-                
-                bindFuture.whenComplete { result in
-                    continuation.resume(with: result)
-                }
+            // Use TransportStackManager to handle all protocol types
+            let channel = try await stackManager.listen(
+                on: localEndpoint,
+                with: properties
+            )
+            
+            // Add handlers for IP-based listeners
+            if case .host = localEndpoint.kind {
+                _ = try await channel.pipeline.addHandler(ServerAcceptHandler(listenerImpl: self)).get()
+            } else if case .ip = localEndpoint.kind {
+                _ = try await channel.pipeline.addHandler(ServerAcceptHandler(listenerImpl: self)).get()
             }
             
             self.channel = channel
@@ -124,7 +125,7 @@ actor ListenerImpl {
     }
     
     /// Handles an accepted channel by creating a Connection
-    private func handleAcceptedChannel(_ channel: Channel) async {
+    func handleAcceptedChannel(_ channel: Channel) async {
         // Check connection limit
         if let limit = connectionLimit, connectionCount >= limit {
             // Reject the connection
@@ -156,6 +157,15 @@ actor ListenerImpl {
             let connection = Connection()
             await connection.setBridge(bridge)
             
+            // Set the public connection reference on the impl
+            await connectionImpl.setPublicConnection(connection)
+            
+            // Update framing handler with connection if needed
+            if framers.count > 0,
+               let framingHandler = try? await channel.pipeline.handler(type: ConfiguredFramingHandler.self).get() {
+                await framingHandler.setConnection(connection)
+            }
+            
             // Deliver the connection
             streamContinuation?.yield(connection)
             
@@ -179,8 +189,14 @@ actor ListenerImpl {
             try await channel.pipeline.addHandler(tlsHandler).get()
         }
         
-        // Add message framing handler
-        let framingHandler = SimpleFramingHandler()
+        // Add message framing handler based on configured framers
+        let framingHandler: ChannelHandler
+        if framers.isEmpty {
+            framingHandler = SimpleFramingHandler()
+        } else {
+            // Create handler without connection initially
+            framingHandler = ConfiguredFramingHandler(framers: framers)
+        }
         try await channel.pipeline.addHandler(framingHandler).get()
         
         // Add the main connection handler
@@ -231,5 +247,30 @@ private final class ConnectionHandler: ChannelInboundHandler, @unchecked Sendabl
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         // Handle errors
         context.close(promise: nil)
+    }
+}
+
+/// Handler for accepting new connections on a server channel
+private final class ServerAcceptHandler: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = Channel
+    
+    private let listenerImpl: ListenerImpl
+    
+    init(listenerImpl: ListenerImpl) {
+        self.listenerImpl = listenerImpl
+    }
+    
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let childChannel = unwrapInboundIn(data)
+        let capturedImpl = listenerImpl
+        
+        Task { @Sendable in
+            await capturedImpl.handleAcceptedChannel(childChannel)
+        }
+    }
+    
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        // Log error but don't close the server channel
+        print("Server accept error: \(error)")
     }
 }
