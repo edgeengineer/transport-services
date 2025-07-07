@@ -1,6 +1,6 @@
 # Transport Services
 
-[![Swift 6.1](https://img.shields.io/badge/Swift-6.1-orange.svg)](https://swift.org)
+[![Swift 6.0](https://img.shields.io/badge/Swift-6.0-orange.svg)](https://swift.org)
 [![Platforms](https://img.shields.io/badge/Platforms-macOS%20|%20Linux-blue.svg)](https://swift.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![macOS](https://img.shields.io/github/actions/workflow/status/edgeengineer/transport-services/swift.yml?branch=main&label=macOS)](https://github.com/edgeengineer/transport-services/actions/workflows/swift.yml)
