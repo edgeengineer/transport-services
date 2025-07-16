@@ -217,7 +217,6 @@ actor ConnectionImpl {
     /// Creates a channel initializer
     private func makeChannelInitializer() -> @Sendable (Channel) -> EventLoopFuture<Void> {
         // Capture needed values
-        let framers = self.framers
         let securityParams = self.securityParameters 
         let serverHostname = self.getServerHostname()
         let weakSelf = self
@@ -232,7 +231,7 @@ actor ConnectionImpl {
                     
                     // Configure callbacks if provided
                     if securityParams.callbacks.trustVerificationCallback != nil {
-                        let callbackHandler = SecurityCallbackHandler(
+                        _ = SecurityCallbackHandler(
                             callbacks: securityParams.callbacks,
                             serverName: serverHostname
                         )

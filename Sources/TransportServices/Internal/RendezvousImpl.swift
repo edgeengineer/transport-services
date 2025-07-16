@@ -162,7 +162,10 @@ actor RendezvousImpl {
         
         var future = channel.eventLoop.makeSucceededFuture(())
         for handler in handlers {
-            future = future.flatMap { channel.pipeline.addHandler(handler) }
+            let handlerToAdd = handler
+            future = future.flatMap { [handlerToAdd] in
+                channel.pipeline.addHandler(handlerToAdd)
+            }
         }
         return future
     }

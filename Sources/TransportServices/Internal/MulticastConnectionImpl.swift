@@ -313,14 +313,11 @@ private final class MulticastReceiverHandler: ChannelInboundHandler, @unchecked 
         
         Task {
             // Create or get connection for this sender
-            if let connection = await impl.handleDatagramFromSender(
+            _ = await impl.handleDatagramFromSender(
                 envelope.data,
                 sender: envelope.remoteAddress,
                 listener: listener
-            ) {
-                // Deliver the data to the connection
-                // This would need to be integrated with the connection's receive mechanism
-            }
+            )
         }
     }
 }
