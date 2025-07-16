@@ -62,7 +62,8 @@ actor ConnectionGroup {
     
     /// Adds a connection to the group
     func addConnection(_ connection: Connection) async {
-        connections[await connection.id] = connection
+        let connectionId = await connection.id
+        connections[connectionId] = connection
     }
     
     /// Removes a connection from the group
@@ -73,6 +74,11 @@ actor ConnectionGroup {
     /// Gets all connections in the group
     func getAllConnections() -> [Connection] {
         Array(connections.values)
+    }
+    
+    /// Gets the count of connections in the group
+    var count: Int {
+        connections.count
     }
     
     /// Updates shared properties for all connections

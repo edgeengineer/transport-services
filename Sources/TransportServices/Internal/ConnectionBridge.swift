@@ -20,11 +20,18 @@ final class ConnectionBridge {
     /// Cached ID to avoid async access
     let id: UUID
     
+    /// The owning connection (set after creation)
+    private weak var owningConnection: Connection?
+    
     // MARK: - Initialization
     
     init(impl: ConnectionImpl) {
         self.impl = impl
         self.id = impl.id
+    }
+    
+    func setOwningConnection(_ connection: Connection) {
+        self.owningConnection = connection
     }
     
     // MARK: - State Access
@@ -82,8 +89,13 @@ final class ConnectionBridge {
         let connection = Connection()
         await connection.setBridge(bridge)
         
-        // Add to the same group
-        if let group = await impl.getConnectionGroup() {
+        // The cloned implementation should have the group set by impl.clone()
+        if let group = await clonedImpl.getConnectionGroup() {
+            // Add the original connection to the group if it's not already there
+            if let originalConnection = owningConnection {
+                await group.addConnection(originalConnection)
+            }
+            // Add the cloned connection to the group
             await group.addConnection(connection)
         }
         
@@ -92,6 +104,10 @@ final class ConnectionBridge {
     
     func getGroupedConnections() async -> [Connection] {
         guard let group = await impl.getConnectionGroup() else {
+            // If no group exists, return just this connection if we have it
+            if let connection = owningConnection {
+                return [connection]
+            }
             return []
         }
         return await group.getAllConnections()

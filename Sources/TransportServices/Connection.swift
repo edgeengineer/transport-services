@@ -59,6 +59,7 @@ public actor Connection: CustomStringConvertible, Sendable {
     /// Internal method to set the bridge
     internal func setBridge(_ bridge: ConnectionBridge) async {
         self._bridge = bridge
+        bridge.setOwningConnection(self)
     }
     
     // MARK: - Identity & State

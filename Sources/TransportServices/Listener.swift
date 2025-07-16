@@ -147,6 +147,15 @@ public actor Listener: Sendable {
         stream ?? AsyncThrowingStream { _ in }
     }
     
+    // MARK: - Properties
+    
+    /// The port number this listener is bound to
+    public var port: UInt16? {
+        get async {
+            await impl?.port
+        }
+    }
+    
     // MARK: - Methods
     
     /// Stops accepting new Connections and closes the Listener.

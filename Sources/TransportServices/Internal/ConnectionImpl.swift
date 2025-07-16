@@ -52,7 +52,7 @@ actor ConnectionImpl {
     private var receiveWaiters: [CheckedContinuation<Message, Error>] = []
     
     /// Connection group this connection belongs to
-    private weak var connectionGroup: ConnectionGroup?
+    private var connectionGroup: ConnectionGroup?
     
     // MARK: - Initialization
     
@@ -319,6 +319,10 @@ actor ConnectionImpl {
     
     /// Receives a message from the connection
     func receive() async throws -> Message {
+        guard properties.direction != .sendOnly else {
+            throw TransportError.receiveFailure("Cannot receive on a send-only connection")
+        }
+        
         guard _state == .established else {
             throw TransportError.receiveFailure("Connection not ready")
         }
@@ -396,7 +400,7 @@ actor ConnectionImpl {
                 framers: framers
             )
             await setConnectionGroup(group)
-            await group.addConnection(Connection()) // Add self (need to fix this)
+            // Note: The original connection will be added to the group by ConnectionBridge.clone()
         }
         
         // Create a new connection in the same group
@@ -406,9 +410,16 @@ actor ConnectionImpl {
         } else {
             framersToUse = await group.getFramers()
         }
+        let finalProperties: TransportProperties
+        if let newProperties = newProperties {
+            finalProperties = newProperties
+        } else {
+            finalProperties = await group.getSharedProperties()
+        }
+        
         let clonedImpl = ConnectionImpl(
             id: UUID(),
-            properties: await group.getSharedProperties(),
+            properties: finalProperties,
             securityParameters: await group.getSecurityParameters(),
             framers: framersToUse,
             eventLoopGroup: eventLoopGroup

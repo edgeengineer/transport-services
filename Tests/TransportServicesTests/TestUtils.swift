@@ -45,9 +45,9 @@ enum TestUtils {
     static func createClientServerPair() async throws -> (client: Connection, server: Connection, listener: Listener) {
         let port = try await getAvailablePort()
         
-        // Create server
+        // Create server with port 0 to let system assign
         var serverLocal = LocalEndpoint(kind: .host("127.0.0.1"))
-        serverLocal.port = port
+        serverLocal.port = 0  // Let system assign port
         
         let serverPreconnection = Preconnection(
             local: [serverLocal],
@@ -55,6 +55,9 @@ enum TestUtils {
         )
         
         let listener = try await serverPreconnection.listen()
+        
+        // Get the actual port that was bound
+        let actualPort = await listener.port ?? port
         
         // Accept connection task
         let serverTask = Task {
@@ -64,9 +67,9 @@ enum TestUtils {
             throw TransportError.establishmentFailure("No connections received")
         }
         
-        // Create client
+        // Create client connecting to the actual port
         var clientRemote = RemoteEndpoint(kind: .host("127.0.0.1"))
-        clientRemote.port = port
+        clientRemote.port = actualPort
         
         let clientPreconnection = Preconnection(
             remote: [clientRemote],

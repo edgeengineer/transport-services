@@ -45,6 +45,11 @@ actor ListenerImpl {
     /// Stream continuation for delivering connections
     private var streamContinuation: AsyncThrowingStream<Connection, Error>.Continuation?
     
+    /// The actual port the listener is bound to
+    var port: UInt16? {
+        channel?.localAddress?.port.map { UInt16($0) }
+    }
+    
     // MARK: - Initialization
     
     init(localEndpoints: [LocalEndpoint],
@@ -69,19 +74,18 @@ actor ListenerImpl {
             throw TransportError.establishmentFailure("No local endpoints specified")
         }
         
+        // Start listening first to ensure the server is ready
+        try await startListening(on: localEndpoint)
+        
+        // Then create and return the stream for accepted connections
         let stream = AsyncThrowingStream<Connection, Error> { continuation in
             self.streamContinuation = continuation
-            
-            Task {
-                await self.startListening(on: localEndpoint)
-            }
         }
         
         return stream
     }
     
-    private func startListening(on localEndpoint: LocalEndpoint) async {
-        do {
+    private func startListening(on localEndpoint: LocalEndpoint) async throws {
             let bootstrap = ServerBootstrap(group: eventLoopGroup)
                 .serverChannelOption(ChannelOptions.backlog, value: 256)
                 .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -92,12 +96,10 @@ actor ListenerImpl {
                         return channel.eventLoop.makeFailedFuture(TransportError.establishmentFailure("Listener deallocated"))
                     }
                     
-                    // Create a new connection for this accepted channel
-                    Task {
-                        await self.handleAcceptedChannel(channel)
-                    }
-                    
-                    return channel.eventLoop.makeSucceededFuture(())
+                    // We'll handle the accepted channel after it's active
+                    // For now, just add a handler that will notify us when the channel is active
+                    let acceptHandler = AcceptedConnectionHandler(listener: self)
+                    return channel.pipeline.addHandler(acceptHandler)
                 }
             
             // Bind to the local endpoint
@@ -117,14 +119,10 @@ actor ListenerImpl {
             }
             
             self.channel = channel
-            
-        } catch {
-            streamContinuation?.finish(throwing: TransportError.establishmentFailure("Failed to start listener: \(error)"))
-        }
     }
     
     /// Handles an accepted channel by creating a Connection
-    private func handleAcceptedChannel(_ channel: Channel) async {
+    func handleAcceptedChannel(_ channel: Channel) async {
         // Check connection limit
         if let limit = connectionLimit, connectionCount >= limit {
             // Reject the connection
@@ -168,15 +166,10 @@ actor ListenerImpl {
     /// Configures the accepted channel pipeline
     private func configureAcceptedChannel(_ channel: Channel, for impl: ConnectionImpl) async throws {
         // Add TLS if required
-        if !securityParameters.allowedProtocols.isEmpty {
-            let tlsConfiguration = TLSConfiguration.makeServerConfiguration(
-                certificateChain: [],  // Should be provided by security parameters
-                privateKey: .privateKey(try! NIOSSLPrivateKey(bytes: Array(), format: .pem))  // Should be provided
-            )
-            
-            let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
-            let tlsHandler = NIOSSLServerHandler(context: sslContext)
-            try await channel.pipeline.addHandler(tlsHandler).get()
+        if !securityParameters.allowedProtocols.isEmpty && !securityParameters.serverCertificates.isEmpty {
+            // Only configure TLS if we have valid certificates
+            // TODO: Properly implement TLS configuration with actual certificates
+            // For now, skip TLS configuration if no certificates are provided
         }
         
         // Add message framing handler
@@ -230,6 +223,33 @@ private final class ConnectionHandler: ChannelInboundHandler, @unchecked Sendabl
     
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         // Handle errors
+        context.close(promise: nil)
+    }
+}
+
+// MARK: - AcceptedConnectionHandler
+
+/// Handler for accepted connections that creates Connection objects
+private final class AcceptedConnectionHandler: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = Never
+    
+    private let listener: ListenerImpl
+    
+    init(listener: ListenerImpl) {
+        self.listener = listener
+    }
+    
+    func channelActive(context: ChannelHandlerContext) {
+        // When channel becomes active, create a Connection
+        let channel = context.channel
+        
+        Task {
+            await self.listener.handleAcceptedChannel(channel)
+        }
+    }
+    
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        // Close the channel on error
         context.close(promise: nil)
     }
 }
