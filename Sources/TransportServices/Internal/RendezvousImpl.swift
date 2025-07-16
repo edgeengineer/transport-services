@@ -136,38 +136,37 @@ actor RendezvousImpl {
                                                   framers: [any MessageFramer],
                                                   securityParameters: SecurityParameters,
                                                   impl: RendezvousImpl) -> EventLoopFuture<Void> {
-        // Similar configuration to outgoing connections
-        var handlers: [ChannelHandler] = []
+        let promise = channel.eventLoop.makePromise(of: Void.self)
         
-        // Add TLS if required
-        if !securityParameters.allowedProtocols.isEmpty {
+        // Use Task to handle async configuration
+        Task {
             do {
-                let tlsConfiguration = TLSConfiguration.makeServerConfiguration(
-                    certificateChain: [], // Would need actual certificates
-                    privateKey: .privateKey(try .init(bytes: [], format: .der)) // Would need actual key
-                )
-                let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
-                let tlsHandler = NIOSSLServerHandler(context: sslContext)
-                handlers.append(tlsHandler)
+                // Add TLS if required
+                if !securityParameters.allowedProtocols.isEmpty {
+                    let tlsConfiguration = TLSConfiguration.makeServerConfiguration(
+                        certificateChain: [], // Would need actual certificates
+                        privateKey: .privateKey(try .init(bytes: [], format: .der)) // Would need actual key
+                    )
+                    let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
+                    let tlsHandler = NIOSSLServerHandler(context: sslContext)
+                    try await channel.pipeline.addHandler(tlsHandler).get()
+                }
+                
+                // Add message framing
+                let framingHandler = MessageFramingHandler(framers: framers)
+                try await channel.pipeline.addHandler(framingHandler).get()
+                
+                // Add rendezvous handler
+                let rendezvousHandler = RendezvousIncomingHandler(impl: impl)
+                try await channel.pipeline.addHandler(rendezvousHandler).get()
+                
+                promise.succeed(())
             } catch {
-                return channel.eventLoop.makeFailedFuture(error)
+                promise.fail(error)
             }
         }
         
-        // Add message framing
-        handlers.append(MessageFramingHandler(framers: framers))
-        
-        // Add rendezvous handler
-        handlers.append(RendezvousIncomingHandler(impl: impl))
-        
-        var future = channel.eventLoop.makeSucceededFuture(())
-        for handler in handlers {
-            let handlerToAdd = handler
-            future = future.flatMap { [handlerToAdd] in
-                channel.pipeline.addHandler(handlerToAdd)
-            }
-        }
-        return future
+        return promise.futureResult
     }
     
     /// Starts connection attempts to all remote endpoints
