@@ -231,10 +231,8 @@ actor ConnectionImpl {
                     
                     // Configure callbacks if provided
                     if securityParams.callbacks.trustVerificationCallback != nil {
-                        _ = SecurityCallbackHandler(
-                            callbacks: securityParams.callbacks,
-                            serverName: serverHostname
-                        )
+                        // TODO: Implement custom verification callback when NIO SSL supports async callbacks
+                        // For now, we'll use the default verification
                         tlsConfiguration.certificateVerification = .noHostnameVerification
                     }
                     
