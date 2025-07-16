@@ -14,7 +14,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
+        # TODO: Re-enable windows-latest when swift-nio-ssl supports Swift 6.0 on Windows
         swift: ["6.0.0"]
     steps:
     - uses: actions/checkout@v4
