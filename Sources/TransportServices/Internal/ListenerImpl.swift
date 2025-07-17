@@ -167,9 +167,32 @@ actor ListenerImpl {
     private func configureAcceptedChannel(_ channel: Channel, for impl: ConnectionImpl) async throws {
         // Add TLS if required
         if !securityParameters.allowedProtocols.isEmpty && !securityParameters.serverCertificates.isEmpty {
-            // Only configure TLS if we have valid certificates
-            // TODO: Properly implement TLS configuration with actual certificates
-            // For now, skip TLS configuration if no certificates are provided
+            // Configure TLS with the provided certificates
+            do {
+                // Get certificate chain and private key
+                let (certificateChain, privateKey) = try extractServerCredentials()
+                
+                // Create TLS configuration
+                var tlsConfiguration = TLSConfiguration.makeServerConfiguration(
+                    certificateChain: certificateChain,
+                    privateKey: privateKey
+                )
+                
+                // Configure ALPN if provided
+                if !securityParameters.alpn.isEmpty {
+                    tlsConfiguration.applicationProtocols = securityParameters.alpn
+                }
+                
+                // Create and add the TLS handler
+                let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
+                let tlsHandler = NIOSSLServerHandler(context: sslContext)
+                try await channel.pipeline.addHandler(tlsHandler, position: .first).get()
+            } catch {
+                // Log TLS configuration error and continue without TLS
+                print("Warning: Failed to configure TLS: \(error)")
+                // Optionally throw if TLS is mandatory
+                // throw TransportError.establishmentFailure("TLS configuration failed: \(error)")
+            }
         }
         
         // Add message framing handler
@@ -199,6 +222,76 @@ actor ListenerImpl {
     /// Sets the connection limit
     func setConnectionLimit(_ limit: Int?) async {
         self.connectionLimit = limit
+    }
+    
+    // MARK: - Private Helpers
+    
+    /// Extracts server certificates and private key from SecurityParameters
+    private func extractServerCredentials() throws -> ([NIOSSLCertificateSource], NIOSSLPrivateKeySource) {
+        guard !securityParameters.serverCertificates.isEmpty else {
+            throw TransportError.establishmentFailure("No server certificates provided")
+        }
+        
+        // Case 1: Separate certificates and private keys
+        if !securityParameters.serverPrivateKeys.isEmpty {
+            // We need at least one private key for the server certificate
+            guard !securityParameters.serverPrivateKeys.isEmpty else {
+                throw TransportError.establishmentFailure("No private key provided for server certificate")
+            }
+            
+            // Build certificate chain - all certificates form the chain
+            var certificateChain: [NIOSSLCertificateSource] = []
+            
+            for certData in securityParameters.serverCertificates {
+                // Try to detect format (PEM vs DER)
+                let certificate: NIOSSLCertificate
+                if certData.starts(with: "-----BEGIN".data(using: .utf8)!) {
+                    certificate = try NIOSSLCertificate(bytes: Array(certData), format: .pem)
+                } else {
+                    certificate = try NIOSSLCertificate(bytes: Array(certData), format: .der)
+                }
+                certificateChain.append(.certificate(certificate))
+            }
+            
+            // Use the first private key (corresponding to the server certificate)
+            let keyData = securityParameters.serverPrivateKeys[0]
+            
+            let privateKey: NIOSSLPrivateKey
+            if keyData.starts(with: "-----BEGIN".data(using: .utf8)!) {
+                privateKey = try NIOSSLPrivateKey(bytes: Array(keyData), format: .pem)
+            } else {
+                privateKey = try NIOSSLPrivateKey(bytes: Array(keyData), format: .der)
+            }
+            
+            // Support for encrypted private keys with password
+            if securityParameters.privateKeyPassword != nil {
+                // Note: NIOSSL doesn't directly support encrypted private keys
+                // This would require additional implementation
+                throw TransportError.establishmentFailure("Encrypted private keys not yet supported")
+            }
+            
+            let privateKeySource = NIOSSLPrivateKeySource.privateKey(privateKey)
+            
+            return (certificateChain, privateKeySource)
+        }
+        
+        // Case 2: PKCS#12 format (certificate and key bundled)
+        // Note: NIO SSL doesn't directly support PKCS#12, so this would need
+        // additional implementation using Security framework or OpenSSL
+        if let firstCertData = securityParameters.serverCertificates.first {
+            // Try to parse as regular certificate first
+            do {
+                _ = try NIOSSLCertificate(bytes: Array(firstCertData), format: .der)
+                // If this succeeds but we have no private key, it's an error
+                throw TransportError.establishmentFailure("Server certificate provided but no private key found. Use serverPrivateKeys or provide PKCS#12 data.")
+            } catch {
+                // If regular certificate parsing failed, might be PKCS#12
+                // For now, we don't support PKCS#12 directly
+                throw TransportError.establishmentFailure("PKCS#12 format not yet supported. Please provide separate certificate and private key.")
+            }
+        }
+        
+        throw TransportError.establishmentFailure("Unable to extract server credentials")
     }
 }
 

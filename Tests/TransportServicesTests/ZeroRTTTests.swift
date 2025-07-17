@@ -48,7 +48,9 @@ struct ZeroRTTTests {
         )
         
         // Send data with connection establishment
-        let earlyData = Message(Data("0-RTT Hello".utf8))
+        var earlyContext = MessageContext()
+        earlyContext.safelyReplayable = true  // Required for 0-RTT
+        let earlyData = Message(Data("0-RTT Hello".utf8), context: earlyContext)
         let clientConnection = try await clientPreconnection.initiateWithSend(earlyData)
         
         // Server should receive the early data

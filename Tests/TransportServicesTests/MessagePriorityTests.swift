@@ -58,21 +58,64 @@ struct MessagePriorityTests {
     func messageExpiration() async throws {
         let (clientConnection, serverConnection, listener) = try await TestUtils.createClientServerPair()
         
-        // Note: Message expiration (expiry/lifetime) is defined in RFC 9622 §9.1.3.1
-        // but may not be implemented yet. This test demonstrates the concept.
+        // Test 1: Message with normal lifetime is delivered
+        var normalContext = MessageContext()
+        normalContext.lifetime = .seconds(1) // 1 second lifetime
+        let normalMsg = Message(Data("Normal message".utf8), context: normalContext)
+        try await clientConnection.send(normalMsg)
         
-        // For now, just test that messages are delivered
-        let testMsg = Message(Data("Test message".utf8))
-        try await clientConnection.send(testMsg)
+        let received1 = try await serverConnection.receive()
+        let text1 = String(data: received1.data, encoding: .utf8) ?? ""
+        #expect(text1 == "Normal message")
         
-        let received = try await serverConnection.receive()
-        let text = String(data: received.data, encoding: .utf8) ?? ""
-        #expect(text == "Test message")
+        // Test 2: Message with very short lifetime (immediate expiry simulation)
+        var shortLifeContext = MessageContext()
+        shortLifeContext.lifetime = .milliseconds(1) // 1ms lifetime
+        let shortLifeMsg = Message(Data("Short lifetime message".utf8), context: shortLifeContext)
         
-        // TODO: When message expiration is implemented, test:
-        // - Messages with short TTL
-        // - Expired message handling
-        // - Delivery deadlines
+        // Send the message
+        try await clientConnection.send(shortLifeMsg)
+        
+        // Add a small delay to simulate network latency
+        try await Task.sleep(nanoseconds: 10_000_000) // 10ms
+        
+        // Try to receive - in a real implementation with expiration,
+        // this might timeout or return an expired indication
+        let received2 = try await serverConnection.receive()
+        let text2 = String(data: received2.data, encoding: .utf8) ?? ""
+        
+        // For now, we expect it to be delivered since expiration isn't implemented
+        #expect(text2 == "Short lifetime message")
+        
+        // Test 3: Message with priority and lifetime using convenience method
+        let priorityContext = MessageContext.timeSensitive(
+            lifetime: .milliseconds(500),
+            priority: 50
+        )
+        let priorityMsg = Message(Data("Priority message with lifetime".utf8), context: priorityContext)
+        try await clientConnection.send(priorityMsg)
+        
+        let received3 = try await serverConnection.receive()
+        let text3 = String(data: received3.data, encoding: .utf8) ?? ""
+        #expect(text3 == "Priority message with lifetime")
+        
+        // Test 4: Final message with lifetime
+        var finalContext = MessageContext.finalMessage()
+        finalContext.lifetime = .seconds(2)
+        let finalMsg = Message(Data("Final message with lifetime".utf8), context: finalContext)
+        try await clientConnection.send(finalMsg)
+        
+        let received4 = try await serverConnection.receive()
+        let text4 = String(data: received4.data, encoding: .utf8) ?? ""
+        #expect(text4 == "Final message with lifetime")
+        // Note: The final flag should be preserved through send/receive,
+        // but this may not be implemented yet in the framing layer
+        
+        // Note: Full expiration implementation would require:
+        // 1. Tracking message creation time
+        // 2. Checking lifetime before delivery
+        // 3. Dropping expired messages
+        // 4. Potentially notifying sender of expiration
         
         // Cleanup
         await clientConnection.close()

@@ -12,6 +12,14 @@ public struct SecurityParameters: Sendable {
     public var alpn             : [String] = []      // ["h2", "hq‑29"]
     public var preSharedKey     : (identity:Data,key:Data)?
     
+    /// Server private keys corresponding to serverCertificates
+    /// - If empty, assumes serverCertificates contains PKCS#12 data with embedded keys
+    /// - If provided, must have same count as serverCertificates
+    public var serverPrivateKeys: [Data] = []
+    
+    /// Password for encrypted private keys or PKCS#12 files
+    public var privateKeyPassword: String?
+    
     /// Dynamic security callbacks for trust verification and identity challenges
     public var callbacks: SecurityCallbacks = SecurityCallbacks()
     

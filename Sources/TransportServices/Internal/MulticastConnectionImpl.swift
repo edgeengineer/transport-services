@@ -111,29 +111,64 @@ actor MulticastConnectionImpl {
     
     /// Configures multicast options on the channel
     private func configureMulticastOptions(channel: Channel, forSending: Bool) async throws {
-        // Note: Multicast options are typically set via socket options
-        // SwiftNIO doesn't have direct multicast support yet, so we'd need to:
-        // 1. Access the underlying socket
-        // 2. Set options using system calls
-        // For now, this is a placeholder implementation
+        // Set multicast TTL (time-to-live)
+        let ttl: CInt = CInt(multicastEndpoint.ttl)
+        try await channel.setOption(ChannelOptions.socketOption(.ip_multicast_ttl), value: ttl).get()
         
-        // TODO: Implement proper multicast socket options when NIO adds support
-        // or use raw socket options
+        // Disable multicast loopback if we're only sending
+        if forSending && properties.multicast.direction == .sendOnly {
+            let loopback: CInt = 0
+            try await channel.setOption(ChannelOptions.socketOption(.ip_multicast_loop), value: loopback).get()
+        }
+        
+        // Set multicast interface if specified
+        if multicastEndpoint.interface != nil {
+            // Note: Setting multicast interface requires platform-specific handling
+            // On Darwin/BSD: IP_MULTICAST_IF uses in_addr structure
+            // On Linux: Uses interface index directly
+            // For now, we'll add a comment about the limitation
+            print("Warning: Setting specific multicast interface not yet implemented")
+        }
+        
+        // For IPv6 multicast (check if group address contains colon)
+        if multicastEndpoint.groupAddress.contains(":") {
+            // Set IPv6 multicast hops
+            let hops: CInt = CInt(multicastEndpoint.ttl)
+            try? await channel.setOption(ChannelOptions.socketOption(.ipv6_multicast_hops), value: hops).get()
+            
+            // Disable IPv6 multicast loopback if needed
+            if forSending && properties.multicast.direction == .sendOnly {
+                let loopback: CInt = 0
+                try? await channel.setOption(ChannelOptions.socketOption(.ipv6_multicast_loop), value: loopback).get()
+            }
+        }
     }
     
     /// Joins a multicast group
     private func joinMulticastGroup(channel: Channel) async throws {
-        // This would use IP_ADD_MEMBERSHIP or IPV6_JOIN_GROUP
-        // Implementation depends on whether it's IPv4 or IPv6
+        // Note: SwiftNIO doesn't have built-in multicast group management
+        // In a production implementation, this would require:
+        // 1. Platform-specific socket options (IP_ADD_MEMBERSHIP/IPV6_JOIN_GROUP)
+        // 2. Constructing appropriate membership structures (ip_mreq/ipv6_mreq)
+        // 3. Handling source-specific multicast (SSM) with IP_ADD_SOURCE_MEMBERSHIP
         
         switch multicastEndpoint.type {
         case .anySource:
-            // Join for any source
-            break
-        case .sourceSpecific(_):
-            // Join with source filter (IP_ADD_SOURCE_MEMBERSHIP)
-            break
+            // For any-source multicast (ASM)
+            // Would use IP_ADD_MEMBERSHIP for IPv4 or IPV6_JOIN_GROUP for IPv6
+            print("Note: Any-source multicast group join not implemented - requires platform-specific socket options")
+            
+        case .sourceSpecific(let sources):
+            // For source-specific multicast (SSM)
+            // Would use IP_ADD_SOURCE_MEMBERSHIP for each source
+            print("Note: Source-specific multicast group join not implemented for \(sources.count) sources")
         }
+        
+        // In a real implementation, we would:
+        // 1. Parse the multicast address
+        // 2. Create the appropriate membership structure
+        // 3. Set the socket option to join the group
+        // 4. Handle errors appropriately
     }
     
     /// Handles a datagram from a new sender

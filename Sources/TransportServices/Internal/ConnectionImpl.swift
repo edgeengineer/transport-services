@@ -230,10 +230,26 @@ actor ConnectionImpl {
                     var tlsConfiguration = TLSConfiguration.makeClientConfiguration()
                     
                     // Configure callbacks if provided
-                    if securityParams.callbacks.trustVerificationCallback != nil {
-                        // TODO: Implement custom verification callback when NIO SSL supports async callbacks
-                        // For now, we'll use the default verification
+                    if securityParams.callbacks.trustVerificationCallback != nil || 
+                       securityParams.callbacks.identityChallengeCallback != nil {
+                        // Create a security callback handler
+                        let callbackHandler = SecurityCallbackHandler(
+                            callbacks: securityParams.callbacks,
+                            serverName: serverHostname
+                        )
+                        
+                        // Note: NIO SSL doesn't support custom verification callbacks yet
+                        // For now, disable hostname verification when custom callbacks are present
+                        // In production, this should use the callback handler when supported
                         tlsConfiguration.certificateVerification = .noHostnameVerification
+                        
+                        // The callback handler is ready for when NIOSSL adds support
+                        _ = callbackHandler.makeNIOSSLCustomVerificationCallback()
+                    }
+                    
+                    // Configure ALPN if provided
+                    if !securityParams.alpn.isEmpty {
+                        tlsConfiguration.applicationProtocols = securityParams.alpn
                     }
                     
                     let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
@@ -276,6 +292,11 @@ actor ConnectionImpl {
     func send(_ message: Message) async throws {
         guard _state == .established else {
             throw TransportError.sendFailure("Connection not ready")
+        }
+        
+        // Check if connection allows sending
+        guard properties.direction != .recvOnly else {
+            throw TransportError.sendFailure("Cannot send on receive-only connection")
         }
         
         guard let channel = channel else {

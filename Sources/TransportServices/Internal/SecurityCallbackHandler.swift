@@ -23,12 +23,22 @@ final class SecurityCallbackHandler: @unchecked Sendable {
     
     /// Creates a custom verification callback for NIO SSL
     func makeNIOSSLCustomVerificationCallback() -> NIOSSLCustomVerificationCallback {
-        // TODO: Implement proper async callback bridge when NIO SSL supports it
-        // For now, return a simple callback that accepts all certificates
-        return { certificates, promise in
-            // Note: This is a simplified implementation
-            // Proper implementation would verify certificates using the callbacks
-            promise.succeed(.certificateVerified)
+        // Bridge between NIO SSL's synchronous callback and our async callbacks
+        return { [weak self] certificates, promise in
+            guard let self = self else {
+                promise.succeed(.certificateVerified)
+                return
+            }
+            
+            // Use Task to bridge from sync to async context
+            Task {
+                let result = await self.performTrustVerification(
+                    certificates: certificates,
+                    callbacks: self.callbacks,
+                    serverName: self.serverName
+                )
+                promise.succeed(result)
+            }
         }
     }
     

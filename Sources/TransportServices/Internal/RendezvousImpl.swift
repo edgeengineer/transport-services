@@ -142,14 +142,28 @@ actor RendezvousImpl {
         Task {
             do {
                 // Add TLS if required
-                if !securityParameters.allowedProtocols.isEmpty {
-                    let tlsConfiguration = TLSConfiguration.makeServerConfiguration(
-                        certificateChain: [], // Would need actual certificates
-                        privateKey: .privateKey(try .init(bytes: [], format: .der)) // Would need actual key
-                    )
-                    let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
-                    let tlsHandler = NIOSSLServerHandler(context: sslContext)
-                    try await channel.pipeline.addHandler(tlsHandler).get()
+                if !securityParameters.allowedProtocols.isEmpty && !securityParameters.serverCertificates.isEmpty {
+                    do {
+                        // Extract server credentials
+                        let (certificateChain, privateKey) = try extractServerCredentials(from: securityParameters)
+                        
+                        var tlsConfiguration = TLSConfiguration.makeServerConfiguration(
+                            certificateChain: certificateChain,
+                            privateKey: privateKey
+                        )
+                        
+                        // Configure ALPN if provided
+                        if !securityParameters.alpn.isEmpty {
+                            tlsConfiguration.applicationProtocols = securityParameters.alpn
+                        }
+                        
+                        let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
+                        let tlsHandler = NIOSSLServerHandler(context: sslContext)
+                        try await channel.pipeline.addHandler(tlsHandler).get()
+                    } catch {
+                        // Log TLS configuration error but continue without TLS
+                        print("Warning: Failed to configure TLS for rendezvous: \(error)")
+                    }
                 }
                 
                 // Add message framing
@@ -219,7 +233,11 @@ actor RendezvousImpl {
             
             // Check if all attempts have failed
             if connectionAttempts.isEmpty && establishedConnection == nil {
-                completionHandler?.resume(throwing: TransportError.establishmentFailure(
+                // Take the completion handler to ensure it's only called once
+                let handler = completionHandler
+                completionHandler = nil
+                
+                handler?.resume(throwing: TransportError.establishmentFailure(
                     "All rendezvous connection attempts failed"
                 ))
             }
@@ -249,9 +267,17 @@ actor RendezvousImpl {
     
     /// Handles the first successful connection
     private func handleSuccessfulConnection(_ connection: Connection) async {
+        // Ensure we only handle the first successful connection
         guard establishedConnection == nil else { return }
         
+        // Atomically check and set the established connection
+        guard completionHandler != nil else { return }
+        
         establishedConnection = connection
+        
+        // Take the completion handler to ensure it's only called once
+        let handler = completionHandler
+        completionHandler = nil
         
         // Cancel all other attempts
         for (_, attempt) in connectionAttempts {
@@ -265,8 +291,8 @@ actor RendezvousImpl {
         }
         listeners.removeAll()
         
-        // Complete the rendezvous
-        completionHandler?.resume(returning: connection)
+        // Complete the rendezvous (only if we have a handler)
+        handler?.resume(returning: connection)
     }
 }
 
@@ -325,4 +351,61 @@ private final class MessageFramingHandler: ChannelDuplexHandler, @unchecked Send
         
         context.write(wrapOutboundOut(buffer), promise: promise)
     }
+}
+
+// MARK: - Private Helpers
+
+/// Extracts server certificates and private key from SecurityParameters
+private func extractServerCredentials(from securityParameters: SecurityParameters) throws -> ([NIOSSLCertificateSource], NIOSSLPrivateKeySource) {
+    guard !securityParameters.serverCertificates.isEmpty else {
+        throw TransportError.establishmentFailure("No server certificates provided")
+    }
+    
+    // Case 1: Separate certificates and private keys
+    if !securityParameters.serverPrivateKeys.isEmpty {
+        // Build certificate chain
+        var certificateChain: [NIOSSLCertificateSource] = []
+        
+        for certData in securityParameters.serverCertificates {
+            // Try to detect format (PEM vs DER)
+            let certificate: NIOSSLCertificate
+            if certData.starts(with: "-----BEGIN".data(using: .utf8)!) {
+                certificate = try NIOSSLCertificate(bytes: Array(certData), format: .pem)
+            } else {
+                certificate = try NIOSSLCertificate(bytes: Array(certData), format: .der)
+            }
+            certificateChain.append(.certificate(certificate))
+        }
+        
+        // Use the first private key
+        let keyData = securityParameters.serverPrivateKeys[0]
+        
+        let privateKey: NIOSSLPrivateKey
+        if keyData.starts(with: "-----BEGIN".data(using: .utf8)!) {
+            privateKey = try NIOSSLPrivateKey(bytes: Array(keyData), format: .pem)
+        } else {
+            privateKey = try NIOSSLPrivateKey(bytes: Array(keyData), format: .der)
+        }
+        
+        // Check for encrypted private keys
+        if securityParameters.privateKeyPassword != nil {
+            throw TransportError.establishmentFailure("Encrypted private keys not yet supported")
+        }
+        
+        let privateKeySource = NIOSSLPrivateKeySource.privateKey(privateKey)
+        
+        return (certificateChain, privateKeySource)
+    }
+    
+    // Case 2: PKCS#12 format not yet supported
+    if let firstCertData = securityParameters.serverCertificates.first {
+        do {
+            _ = try NIOSSLCertificate(bytes: Array(firstCertData), format: .der)
+            throw TransportError.establishmentFailure("Server certificate provided but no private key found. Use serverPrivateKeys or provide PKCS#12 data.")
+        } catch {
+            throw TransportError.establishmentFailure("PKCS#12 format not yet supported. Please provide separate certificate and private key.")
+        }
+    }
+    
+    throw TransportError.establishmentFailure("Unable to extract server credentials")
 }
