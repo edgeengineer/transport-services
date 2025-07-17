@@ -12,6 +12,7 @@ struct ZeroRTTTests {
     
     @Test("InitiateWithSend for 0-RTT data")
     func initiateWithSend() async throws {
+        
         // Create server
         let port = try await TestUtils.getAvailablePort()
         var serverLocal = LocalEndpoint(kind: .host("127.0.0.1"))
@@ -35,6 +36,9 @@ struct ZeroRTTTests {
             throw TransportError.establishmentFailure("No connections received")
         }
         
+        // Yield to ensure server task starts
+        await Task.yield()
+        
         // Create client with 0-RTT
         var clientRemote = RemoteEndpoint(kind: .host("127.0.0.1"))
         clientRemote.port = port
@@ -47,6 +51,9 @@ struct ZeroRTTTests {
             transport: clientProperties
         )
         
+        // Add a small delay to ensure server is listening
+        try await Task.sleep(nanoseconds: 10_000_000) // 10ms
+        
         // Send data with connection establishment
         var earlyContext = MessageContext()
         earlyContext.safelyReplayable = true  // Required for 0-RTT
@@ -55,7 +62,12 @@ struct ZeroRTTTests {
         
         // Server should receive the early data
         let serverConnection = try await serverTask.value
+        
+        // Add a small delay to ensure message has been delivered
+        try await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        
         let received = try await serverConnection.receive()
+        
         let text = String(data: received.data, encoding: .utf8) ?? ""
         
         #expect(text == "0-RTT Hello")

@@ -299,15 +299,13 @@ public final class Preconnection: @unchecked Sendable {
             )
         }
         
-        // Enable 0-RTT in transport properties
-        var zeroRTTProperties = transportProperties
-        zeroRTTProperties.zeroRTT = .require
+        // Use the transport properties as-is (client already set .prefer)
         
         // Use the Transport Services implementation to create the connection
         let connection = try await TransportServicesImpl.shared.initiateWithSend(
             remoteEndpoints: remoteEndpoints,
             localEndpoints: localEndpoints,
-            properties: zeroRTTProperties,
+            properties: transportProperties,
             securityParameters: securityParameters,
             framers: framers,
             firstMessage: firstMessage

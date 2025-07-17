@@ -196,7 +196,6 @@ actor ConnectionImpl {
             }
             
             self.channel = channel
-            self._state = .established
             
             // Extract local endpoint information
             if let localAddress = channel.localAddress {
@@ -205,7 +204,12 @@ actor ConnectionImpl {
                 )
             }
             
+            // Set state to established before sending to allow the send
+            self._state = .established
+            
             // Send the first message immediately
+            // For true 0-RTT, this would be sent during the handshake
+            // We're simulating by sending immediately after connection
             try await send(capturedMessage)
             
         } catch {
@@ -457,8 +461,11 @@ actor ConnectionImpl {
 // MARK: - Channel Handlers
 
 /// Main handler for connection events
-private final class ConnectionHandler: ChannelInboundHandler, @unchecked Sendable {
+private final class ConnectionHandler: ChannelDuplexHandler, @unchecked Sendable {
     typealias InboundIn = Message
+    typealias InboundOut = Message
+    typealias OutboundIn = Message
+    typealias OutboundOut = Message
     
     private let impl: ConnectionImpl
     
@@ -473,6 +480,11 @@ private final class ConnectionHandler: ChannelInboundHandler, @unchecked Sendabl
         Task { @Sendable in
             await capturedImpl.handleIncomingMessage(message)
         }
+    }
+    
+    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        // Pass through the message and flush
+        context.writeAndFlush(data, promise: promise)
     }
     
     func errorCaught(context: ChannelHandlerContext, error: Error) {

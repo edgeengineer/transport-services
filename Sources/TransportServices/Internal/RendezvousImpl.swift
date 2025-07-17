@@ -79,6 +79,9 @@ actor RendezvousImpl {
         // Start listeners on all local endpoints
         await startListeners()
         
+        // Give listeners time to be ready
+        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        
         // Start connection attempts to all remote endpoints
         await startConnectionAttempts()
     }
@@ -108,9 +111,11 @@ actor RendezvousImpl {
                 channel = try await bootstrap.bind(host: address, port: Int(localEndpoint.port ?? 0)).get()
             }
             
+            // [Rendezvous] Started listener on \(channel.localAddress?.description ?? "unknown")")
             listeners.append(channel)
             
         } catch {
+            // [Rendezvous] Failed to start listener on \(localEndpoint.description): \(error)")
             // Continue with other endpoints on error
         }
     }
@@ -119,14 +124,16 @@ actor RendezvousImpl {
     private func makeChildChannelInitializer() -> @Sendable (Channel) -> EventLoopFuture<Void> {
         let framers = self.framers
         let securityParams = self.securityParameters
-        let weakSelf = self
         
-        return { @Sendable channel in
-            Self.configureIncomingChannel(
+        return { @Sendable [weak self] channel in
+            guard let self = self else {
+                return channel.eventLoop.makeFailedFuture(TransportError.establishmentFailure("Rendezvous deallocated"))
+            }
+            return Self.configureIncomingChannel(
                 channel: channel,
                 framers: framers,
                 securityParameters: securityParams,
-                impl: weakSelf
+                impl: self
             )
         }
     }
@@ -167,7 +174,7 @@ actor RendezvousImpl {
                 }
                 
                 // Add message framing
-                let framingHandler = MessageFramingHandler(framers: framers)
+                let framingHandler = SimpleFramingHandler()
                 try await channel.pipeline.addHandler(framingHandler).get()
                 
                 // Add rendezvous handler
@@ -208,6 +215,7 @@ actor RendezvousImpl {
     
     /// Attempts a single connection
     private func attemptConnection(id: UUID, from localEndpoint: LocalEndpoint?, to remoteEndpoint: RemoteEndpoint) async {
+        // [Rendezvous] Attempting connection from \(localEndpoint?.description ?? "ephemeral") to \(remoteEndpoint.description)")
         do {
             let impl = ConnectionImpl(
                 id: UUID(),
@@ -218,6 +226,8 @@ actor RendezvousImpl {
             )
             
             try await impl.establish(to: remoteEndpoint, from: localEndpoint)
+            
+            // [Rendezvous] Outgoing connection established successfully")
             
             // Create the connection
             let bridge = ConnectionBridge(impl: impl)
@@ -258,6 +268,16 @@ actor RendezvousImpl {
         // Set the channel directly (it's already established)
         await impl.setEstablishedChannel(channel)
         
+        // Now add the connection handler to complete the pipeline
+        do {
+            let connectionHandler = ConnectionHandler(impl: impl)
+            try await channel.pipeline.addHandler(connectionHandler).get()
+        } catch {
+            // Failed to configure the channel
+            try? await channel.close()
+            return
+        }
+        
         let bridge = ConnectionBridge(impl: impl)
         let connection = Connection()
         await connection.setBridge(bridge)
@@ -267,11 +287,21 @@ actor RendezvousImpl {
     
     /// Handles the first successful connection
     private func handleSuccessfulConnection(_ connection: Connection) async {
+        // [Rendezvous] handleSuccessfulConnection called")
+        
         // Ensure we only handle the first successful connection
-        guard establishedConnection == nil else { return }
+        guard establishedConnection == nil else { 
+            // [Rendezvous] Already have a connection, closing this one")
+            // Already have a connection, close this one
+            await connection.close()
+            return 
+        }
         
         // Atomically check and set the established connection
-        guard completionHandler != nil else { return }
+        guard completionHandler != nil else { 
+            // [Rendezvous] No completion handler")
+            return 
+        }
         
         establishedConnection = connection
         
@@ -291,6 +321,7 @@ actor RendezvousImpl {
         }
         listeners.removeAll()
         
+        // [Rendezvous] Completing rendezvous with successful connection")
         // Complete the rendezvous (only if we have a handler)
         handler?.resume(returning: connection)
     }
@@ -299,7 +330,7 @@ actor RendezvousImpl {
 // MARK: - Channel Handlers
 
 /// Handles incoming connections during rendezvous
-private final class RendezvousIncomingHandler: ChannelInboundHandler, @unchecked Sendable {
+private final class RendezvousIncomingHandler: ChannelInboundHandler, RemovableChannelHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
     
     private let impl: RendezvousImpl
@@ -309,47 +340,55 @@ private final class RendezvousIncomingHandler: ChannelInboundHandler, @unchecked
     }
     
     func channelActive(context: ChannelHandlerContext) {
+        // [Rendezvous] RendezvousIncomingHandler.channelActive called")
         // New incoming connection established
         let channel = context.channel
+        
+        // Remove ourselves from the pipeline since we're done
+        context.pipeline.removeHandler(self, promise: nil)
         
         Task {
             await impl.handleIncomingConnection(channel)
         }
+        
+        // Pass the event up the pipeline
+        context.fireChannelActive()
     }
 }
 
-// MARK: - Message Framing Handler (reused from ConnectionImpl)
 
-/// Handles message framing for the connection
-private final class MessageFramingHandler: ChannelDuplexHandler, @unchecked Sendable {
-    typealias InboundIn = ByteBuffer
+// MARK: - Connection Handler
+
+/// Main handler for connection events
+private final class ConnectionHandler: ChannelDuplexHandler, @unchecked Sendable {
+    typealias InboundIn = Message
     typealias InboundOut = Message
     typealias OutboundIn = Message
-    typealias OutboundOut = ByteBuffer
+    typealias OutboundOut = Message
     
-    private let framers: [any MessageFramer]
+    private let impl: ConnectionImpl
     
-    init(framers: [any MessageFramer]) {
-        self.framers = framers
+    init(impl: ConnectionImpl) {
+        self.impl = impl
     }
     
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        let buffer = unwrapInboundIn(data)
+        let message = unwrapInboundIn(data)
+        let capturedImpl = impl
         
-        // For now, treat the entire buffer as a message
-        // Full implementation would use framers to delimit messages
-        let message = Message(Data(buffer.readableBytesView))
-        
-        context.fireChannelRead(wrapInboundOut(message))
+        Task { @Sendable in
+            await capturedImpl.handleIncomingMessage(message)
+        }
     }
     
     func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
-        let message = unwrapOutboundIn(data)
-        
-        var buffer = context.channel.allocator.buffer(capacity: message.data.count)
-        buffer.writeBytes(message.data)
-        
-        context.write(wrapOutboundOut(buffer), promise: promise)
+        // Pass through the message and flush
+        context.writeAndFlush(data, promise: promise)
+    }
+    
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        // Handle errors
+        context.close(promise: nil)
     }
 }
 
