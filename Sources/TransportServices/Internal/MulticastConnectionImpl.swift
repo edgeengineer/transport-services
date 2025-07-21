@@ -59,7 +59,7 @@ actor MulticastConnectionImpl {
         // Configure multicast options
         try await configureMulticastOptions(channel: channel, forSending: true)
         
-        // Create connection wrapper
+        // Create standard ConnectionImpl
         let impl = ConnectionImpl(
             id: UUID(),
             properties: properties,
@@ -262,8 +262,7 @@ actor MulticastConnectionImpl {
     // MARK: - Channel Configuration
     
     nonisolated private func configureSenderChannel(channel: Channel) -> EventLoopFuture<Void> {
-        // Add handler for sending to multicast group
-        return channel.pipeline.addHandler(MulticastSenderHandler(
+        return channel.pipeline.addHandler(MulticastSendHandler(
             multicastEndpoint: multicastEndpoint
         ))
     }
@@ -274,6 +273,52 @@ actor MulticastConnectionImpl {
             impl: self,
             listener: listener
         ))
+    }
+}
+
+// MARK: - Multicast Send Handler
+
+/// Handles converting Messages to AddressedEnvelopes for multicast
+private final class MulticastSendHandler: ChannelOutboundHandler, @unchecked Sendable {
+    typealias OutboundIn = Message
+    typealias OutboundOut = AddressedEnvelope<ByteBuffer>
+    
+    private let multicastEndpoint: MulticastEndpoint
+    private let multicastAddress: SocketAddress?
+    
+    init(multicastEndpoint: MulticastEndpoint) {
+        self.multicastEndpoint = multicastEndpoint
+        
+        // Create socket address for the multicast group
+        do {
+            self.multicastAddress = try SocketAddress(
+                ipAddress: multicastEndpoint.groupAddress,
+                port: Int(multicastEndpoint.port)
+            )
+        } catch {
+            self.multicastAddress = nil
+        }
+    }
+    
+    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        let message = unwrapOutboundIn(data)
+        
+        guard let multicastAddress = multicastAddress else {
+            promise?.fail(TransportError.sendFailure("Invalid multicast address"))
+            return
+        }
+        
+        // Convert message data to ByteBuffer
+        var buffer = context.channel.allocator.buffer(capacity: message.data.count)
+        buffer.writeBytes(message.data)
+        
+        // Create addressed envelope
+        let envelope = AddressedEnvelope(
+            remoteAddress: multicastAddress,
+            data: buffer
+        )
+        
+        context.write(wrapOutboundOut(envelope), promise: promise)
     }
 }
 
@@ -329,44 +374,6 @@ public actor MulticastListener {
 }
 
 // MARK: - Channel Handlers
-
-/// Handles sending to a multicast group
-private final class MulticastSenderHandler: ChannelOutboundHandler, @unchecked Sendable {
-    typealias OutboundIn = AddressedEnvelope<ByteBuffer>
-    typealias OutboundOut = AddressedEnvelope<ByteBuffer>
-    
-    private let multicastEndpoint: MulticastEndpoint
-    private let multicastAddress: SocketAddress?
-    
-    init(multicastEndpoint: MulticastEndpoint) {
-        self.multicastEndpoint = multicastEndpoint
-        
-        // Create socket address for the multicast group
-        do {
-            self.multicastAddress = try SocketAddress(
-                ipAddress: multicastEndpoint.groupAddress,
-                port: Int(multicastEndpoint.port)
-            )
-        } catch {
-            self.multicastAddress = nil
-        }
-    }
-    
-    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
-        let envelope = unwrapOutboundIn(data)
-        
-        // Always send to the multicast address
-        if let multicastAddress = multicastAddress {
-            let newEnvelope = AddressedEnvelope(
-                remoteAddress: multicastAddress,
-                data: envelope.data
-            )
-            context.write(wrapOutboundOut(newEnvelope), promise: promise)
-        } else {
-            promise?.fail(TransportError.sendFailure("Invalid multicast address"))
-        }
-    }
-}
 
 /// Handles receiving from a multicast group
 private final class MulticastReceiverHandler: ChannelInboundHandler, @unchecked Sendable {
