@@ -5,6 +5,13 @@ import Foundation
 #endif
 @preconcurrency import NIOCore
 import NIOPosix
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(WinSDK)
+import WinSDK
+#endif
 
 /// Implementation of multicast connections.
 ///
@@ -110,40 +117,78 @@ actor MulticastConnectionImpl {
     
     /// Configures multicast options on the channel
     private func configureMulticastOptions(channel: Channel, forSending: Bool) async throws {
-        // Note: Multicast socket options are not yet implemented
-        // This would require platform-specific handling and proper type conversions
-        // between different platforms (Int vs Int32 for socket option values)
+        guard let provider = channel as? SocketOptionProvider else {
+            throw TransportError.notSupported("Channel does not support socket options")
+        }
         
-        // For now, throw an error indicating multicast is not supported
-        throw TransportError.notSupported("Multicast configuration not yet implemented - requires platform-specific socket options")
+        // Set multicast TTL (only for IPv4)
+        try await provider.setIPMulticastTTL(CUnsignedChar(multicastEndpoint.ttl)).get()
+        
+        // Set multicast loopback
+        try await provider.setIPMulticastLoop(CUnsignedChar(multicastEndpoint.loopback ? 1 : 0)).get()
+        
+        // Set interface if specified
+        if let interfaceName = multicastEndpoint.interface {
+            // Get the network device for the interface
+            let devices = try NIOCore.System.enumerateDevices()
+            if let device = devices.first(where: { $0.name == interfaceName }) {
+                // Set the multicast interface based on address family
+                switch device.address {
+                case .some(.v4(let addr)):
+                    try await provider.setIPMulticastIF(addr.address.sin_addr).get()
+                case .some(.v6):
+                    try await provider.setIPv6MulticastIF(CUnsignedInt(device.interfaceIndex)).get()
+                case .some(.unixDomainSocket):
+                    throw TransportError.establishmentFailure("Cannot use Unix domain socket for multicast")
+                case .none:
+                    // No address on this device, skip
+                    break
+                }
+            }
+        }
     }
     
     /// Joins a multicast group
     private func joinMulticastGroup(channel: Channel) async throws {
-        // Note: SwiftNIO doesn't have built-in multicast group management
-        // In a production implementation, this would require:
-        // 1. Platform-specific socket options (IP_ADD_MEMBERSHIP/IPV6_JOIN_GROUP)
-        // 2. Constructing appropriate membership structures (ip_mreq/ipv6_mreq)
-        // 3. Handling source-specific multicast (SSM) with IP_ADD_SOURCE_MEMBERSHIP
+        // Create socket address for the multicast group
+        let groupAddress = try SocketAddress(
+            ipAddress: multicastEndpoint.groupAddress,
+            port: Int(multicastEndpoint.port)
+        )
+        
+        // Check if channel supports multicast
+        guard let multicastChannel = channel as? MulticastChannel else {
+            throw TransportError.notSupported("Channel does not support multicast operations")
+        }
+        
+        // Get device if interface is specified
+        var device: NIONetworkDevice? = nil
+        if let interfaceName = multicastEndpoint.interface {
+            let devices = try NIOCore.System.enumerateDevices()
+            device = devices.first(where: { $0.name == interfaceName })
+            if device == nil {
+                throw TransportError.establishmentFailure("Interface '\(interfaceName)' not found")
+            }
+        }
         
         switch multicastEndpoint.type {
         case .anySource:
             // For any-source multicast (ASM)
-            // Would use IP_ADD_MEMBERSHIP for IPv4 or IPV6_JOIN_GROUP for IPv6
-            // This feature requires platform-specific socket options and is not yet implemented
-            throw TransportError.notSupported("Any-source multicast group join not yet implemented")
+            try await multicastChannel.joinGroup(groupAddress, device: device).get()
             
         case .sourceSpecific(let sources):
             // For source-specific multicast (SSM)
-            // Would use IP_ADD_SOURCE_MEMBERSHIP for each source
-            throw TransportError.notSupported("Source-specific multicast group join not yet implemented for \(sources.count) sources")
+            // Note: SwiftNIO's MulticastChannel doesn't directly support SSM
+            // We'll join the group and handle source filtering at the application level
+            try await multicastChannel.joinGroup(groupAddress, device: device).get()
+            
+            // TODO: Implement source filtering
+            // This would require additional socket options like IP_ADD_SOURCE_MEMBERSHIP
+            // which are not yet exposed in SwiftNIO's channel options
+            if !sources.isEmpty {
+                print("Warning: Source-specific multicast filtering not yet implemented for sources: \(sources)")
+            }
         }
-        
-        // In a real implementation, we would:
-        // 1. Parse the multicast address
-        // 2. Create the appropriate membership structure
-        // 3. Set the socket option to join the group
-        // 4. Handle errors appropriately
     }
     
     /// Handles a datagram from a new sender
@@ -187,8 +232,26 @@ actor MulticastConnectionImpl {
     
     /// Stops the multicast connection
     func stop() async {
-        // Leave multicast group
+        // Leave multicast group before closing
         if let channel = channel {
+            // Create socket address for the multicast group
+            if let groupAddress = try? SocketAddress(
+                ipAddress: multicastEndpoint.groupAddress,
+                port: Int(multicastEndpoint.port)
+            ),
+            let multicastChannel = channel as? MulticastChannel {
+                // Get device if interface was specified
+                var device: NIONetworkDevice? = nil
+                if let interfaceName = multicastEndpoint.interface,
+                   let devices = try? NIOCore.System.enumerateDevices() {
+                    device = devices.first(where: { $0.name == interfaceName })
+                }
+                
+                // Leave the multicast group
+                try? await multicastChannel.leaveGroup(groupAddress, device: device).get()
+            }
+            
+            // Close the channel
             try? await channel.close()
         }
         

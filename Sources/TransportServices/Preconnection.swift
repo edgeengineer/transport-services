@@ -253,6 +253,56 @@ public final class Preconnection: @unchecked Sendable {
             )
         }
         
+        // Check if this is a multicast sender
+        if let firstRemote = remoteEndpoints.first, firstRemote.isMulticast {
+            // Ensure all endpoints are multicast if the first one is
+            for endpoint in remoteEndpoints {
+                guard endpoint.isMulticast else {
+                    throw TransportError.establishmentFailure(
+                        "Cannot mix multicast and non-multicast endpoints"
+                    )
+                }
+            }
+            
+            // For multicast, we only support a single remote endpoint currently
+            guard remoteEndpoints.count == 1 else {
+                throw TransportError.establishmentFailure(
+                    "Multiple multicast endpoints not yet supported"
+                )
+            }
+            
+            // Validate that multicast direction allows sending
+            let direction = transportProperties.multicast.direction
+            guard direction == .sendOnly || direction == .bidirectional else {
+                throw TransportError.establishmentFailure(
+                    "Multicast connection must allow sending (sendOnly or bidirectional)"
+                )
+            }
+            
+            // Create a MulticastEndpoint from the remote endpoint
+            let remote = remoteEndpoints[0]
+            guard case .ip(let groupAddress) = remote.kind,
+                  let port = remote.port else {
+                throw TransportError.establishmentFailure(
+                    "Multicast requires IP address and port"
+                )
+            }
+            
+            let multicastEndpoint = MulticastEndpoint(
+                groupAddress: groupAddress,
+                port: port,
+                interface: localEndpoints.first?.interface,
+                ttl: 1,  // Default TTL, could be from properties
+                loopback: false  // Default, could be from properties
+            )
+            
+            // Return multicast sender connection
+            return try await TransportServicesImpl.shared.createMulticastSender(
+                multicastEndpoint: multicastEndpoint,
+                properties: transportProperties
+            )
+        }
+        
         // Use the Transport Services implementation to create the connection
         return try await TransportServicesImpl.shared.initiate(
             remoteEndpoints: remoteEndpoints,
@@ -348,6 +398,87 @@ public final class Preconnection: @unchecked Sendable {
         guard !localEndpoints.isEmpty else {
             throw TransportError.establishmentFailure(
                 "At least one Local Endpoint must be specified for listen"
+            )
+        }
+        
+        // Check if this is a multicast listener
+        if let firstLocal = localEndpoints.first, firstLocal.isMulticast {
+            // Ensure all endpoints are multicast if the first one is
+            for endpoint in localEndpoints {
+                guard endpoint.isMulticast else {
+                    throw TransportError.establishmentFailure(
+                        "Cannot mix multicast and non-multicast endpoints"
+                    )
+                }
+            }
+            
+            // For multicast, we only support a single local endpoint currently
+            guard localEndpoints.count == 1 else {
+                throw TransportError.establishmentFailure(
+                    "Multiple multicast endpoints not yet supported"
+                )
+            }
+            
+            // Create a MulticastEndpoint from the local endpoint
+            let local = localEndpoints[0]
+            guard case .ip(let groupAddress) = local.kind,
+                  let port = local.port else {
+                throw TransportError.establishmentFailure(
+                    "Multicast requires IP address and port"
+                )
+            }
+            
+            let multicastEndpoint = MulticastEndpoint(
+                groupAddress: groupAddress,
+                port: port,
+                interface: local.interface,
+                ttl: 1,  // Default TTL, could be from properties
+                loopback: false  // Default, could be from properties
+            )
+            
+            // Check if source-specific multicast is requested
+            if !remoteEndpoints.isEmpty {
+                var sources: [String] = []
+                for remote in remoteEndpoints {
+                    if case .ip(let address) = remote.kind {
+                        sources.append(address)
+                    }
+                }
+                if !sources.isEmpty {
+                    // Create SSM endpoint
+                    let ssmEndpoint = MulticastEndpoint(
+                        groupAddress: groupAddress,
+                        sources: sources,
+                        port: port,
+                        interface: local.interface,
+                        ttl: 1,
+                        loopback: false
+                    )
+                    
+                    // Return multicast listener
+                    let multicastListener = try await TransportServicesImpl.shared.createMulticastReceiver(
+                        multicastEndpoint: ssmEndpoint,
+                        properties: transportProperties
+                    )
+                    
+                    // Wrap in standard Listener interface
+                    // Note: This would require updating Listener to support multicast
+                    throw TransportError.notSupported(
+                        "Multicast listener wrapper not yet implemented"
+                    )
+                }
+            }
+            
+            // Return ASM multicast listener
+            let multicastListener = try await TransportServicesImpl.shared.createMulticastReceiver(
+                multicastEndpoint: multicastEndpoint,
+                properties: transportProperties
+            )
+            
+            // Wrap in standard Listener interface
+            // Note: This would require updating Listener to support multicast
+            throw TransportError.notSupported(
+                "Multicast listener wrapper not yet implemented"
             )
         }
         
