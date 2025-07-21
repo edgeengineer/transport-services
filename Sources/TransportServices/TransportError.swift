@@ -199,6 +199,24 @@ public enum TransportError: Error, Sendable {
     /// - Note: Cancellation is considered a normal flow control mechanism,
     ///   not a fatal error.
     case cancelled
+    
+    /// Operation or feature is not supported.
+    ///
+    /// Indicates that the requested operation or feature is not implemented
+    /// or not available on the current platform. This typically occurs for:
+    /// - Platform-specific features not available on all systems
+    /// - Features that are planned but not yet implemented
+    /// - Protocol-specific operations on incompatible connections
+    ///
+    /// - Parameter reason: Description of what is not supported.
+    ///
+    /// ## Examples
+    /// ```swift
+    /// case .notSupported("Multicast interface selection requires platform-specific APIs")
+    /// case .notSupported("SCTP protocol not available on this platform")
+    /// case .notSupported("Hardware offload not supported by network interface")
+    /// ```
+    case notSupported(String)
 }
 
 // MARK: - Error Descriptions
@@ -216,6 +234,8 @@ extension TransportError: LocalizedError {
             return "Connection is closed"
         case .cancelled:
             return "Operation was cancelled"
+        case .notSupported(let reason):
+            return reason
         }
     }
 }
@@ -236,7 +256,7 @@ extension TransportError {
         switch self {
         case .sendFailure, .receiveFailure:
             return true
-        default:
+        case .establishmentFailure, .connectionClosed, .cancelled, .notSupported:
             return false
         }
     }
@@ -246,7 +266,7 @@ extension TransportError {
         switch self {
         case .establishmentFailure, .connectionClosed:
             return true
-        case .sendFailure, .receiveFailure, .cancelled:
+        case .sendFailure, .receiveFailure, .cancelled, .notSupported:
             return false
         }
     }

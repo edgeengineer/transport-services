@@ -175,39 +175,28 @@ actor ListenerImpl {
         let alpnProtocols = securityParameters.alpn
         
         if needsTLS {
-            do {
-                credentials = try extractServerCredentials()
-            } catch {
-                print("Warning: Failed to extract TLS credentials: \(error)")
-                credentials = nil
-            }
+            credentials = try extractServerCredentials()
         } else {
             credentials = nil
         }
         
         // Add TLS if required
         if let (certificateChain, privateKey) = credentials {
-            do {
-                // Create TLS configuration
-                var tlsConfiguration = TLSConfiguration.makeServerConfiguration(
-                    certificateChain: certificateChain,
-                    privateKey: privateKey
-                )
-                
-                // Configure ALPN if provided
-                if !alpnProtocols.isEmpty {
-                    tlsConfiguration.applicationProtocols = alpnProtocols
-                }
-                
-                // Create and add the TLS handler
-                let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
-                let tlsHandler = NIOSSLServerHandler(context: sslContext)
-                try await channel.pipeline.addHandler(tlsHandler, position: .first).get()
-            } catch {
-                // Log TLS configuration error and continue without TLS
-                print("Warning: Failed to configure TLS: \(error)")
-                // Continue without TLS for non-TLS connections
+            // Create TLS configuration
+            var tlsConfiguration = TLSConfiguration.makeServerConfiguration(
+                certificateChain: certificateChain,
+                privateKey: privateKey
+            )
+            
+            // Configure ALPN if provided
+            if !alpnProtocols.isEmpty {
+                tlsConfiguration.applicationProtocols = alpnProtocols
             }
+            
+            // Create and add the TLS handler
+            let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
+            let tlsHandler = NIOSSLServerHandler(context: sslContext)
+            try await channel.pipeline.addHandler(tlsHandler, position: .first).get()
         }
         
         // Add message framing handler

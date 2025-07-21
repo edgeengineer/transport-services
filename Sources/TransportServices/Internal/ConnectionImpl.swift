@@ -19,13 +19,13 @@ actor ConnectionImpl {
     let id: UUID
     
     /// The transport properties configured during preestablishment
-    let properties: TransportProperties
+    nonisolated let properties: TransportProperties
     
     /// The security parameters for this connection
-    let securityParameters: SecurityParameters
+    nonisolated let securityParameters: SecurityParameters
     
     /// Message framers for this connection
-    let framers: [any MessageFramer]
+    nonisolated let framers: [any MessageFramer]
     
     /// The NIO channel for this connection
     private var channel: Channel?

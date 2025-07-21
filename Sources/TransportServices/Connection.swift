@@ -89,7 +89,7 @@ public actor Connection: CustomStringConvertible, Sendable {
     /// read-only throughout the connection's lifetime.
     public var properties: TransportProperties { 
         get async { 
-            await _impl?.properties ?? TransportProperties() 
+            _impl?.properties ?? TransportProperties() 
         } 
     }
     
@@ -249,9 +249,9 @@ public actor Connection: CustomStringConvertible, Sendable {
         } else {
             // Create a new group for this connection
             group = ConnectionGroup(
-                properties: await impl.properties,
-                securityParameters: await impl.securityParameters,
-                framers: await impl.framers
+                properties: impl.properties,
+                securityParameters: impl.securityParameters,
+                framers: impl.framers
             )
             await impl.setConnectionGroup(group)
         }

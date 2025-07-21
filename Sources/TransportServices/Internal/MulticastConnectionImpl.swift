@@ -111,12 +111,12 @@ actor MulticastConnectionImpl {
     /// Configures multicast options on the channel
     private func configureMulticastOptions(channel: Channel, forSending: Bool) async throws {
         // Set multicast TTL (time-to-live)
-        let ttl: CInt = CInt(multicastEndpoint.ttl)
+        let ttl = Int32(multicastEndpoint.ttl)
         try await channel.setOption(ChannelOptions.socketOption(.ip_multicast_ttl), value: ttl).get()
         
         // Disable multicast loopback if we're only sending
         if forSending && properties.multicast.direction == .sendOnly {
-            let loopback: CInt = 0
+            let loopback: Int32 = 0
             try await channel.setOption(ChannelOptions.socketOption(.ip_multicast_loop), value: loopback).get()
         }
         
@@ -125,19 +125,18 @@ actor MulticastConnectionImpl {
             // Note: Setting multicast interface requires platform-specific handling
             // On Darwin/BSD: IP_MULTICAST_IF uses in_addr structure
             // On Linux: Uses interface index directly
-            // For now, we'll add a comment about the limitation
-            print("Warning: Setting specific multicast interface not yet implemented")
+            throw TransportError.notSupported("Setting specific multicast interface not yet implemented")
         }
         
         // For IPv6 multicast (check if group address contains colon)
         if multicastEndpoint.groupAddress.contains(":") {
             // Set IPv6 multicast hops
-            let hops: CInt = CInt(multicastEndpoint.ttl)
+            let hops = Int32(multicastEndpoint.ttl)
             try? await channel.setOption(ChannelOptions.socketOption(.ipv6_multicast_hops), value: hops).get()
             
             // Disable IPv6 multicast loopback if needed
             if forSending && properties.multicast.direction == .sendOnly {
-                let loopback: CInt = 0
+                let loopback: Int32 = 0
                 try? await channel.setOption(ChannelOptions.socketOption(.ipv6_multicast_loop), value: loopback).get()
             }
         }
@@ -155,12 +154,13 @@ actor MulticastConnectionImpl {
         case .anySource:
             // For any-source multicast (ASM)
             // Would use IP_ADD_MEMBERSHIP for IPv4 or IPV6_JOIN_GROUP for IPv6
-            print("Note: Any-source multicast group join not implemented - requires platform-specific socket options")
+            // This feature requires platform-specific socket options and is not yet implemented
+            throw TransportError.notSupported("Any-source multicast group join not yet implemented")
             
         case .sourceSpecific(let sources):
             // For source-specific multicast (SSM)
             // Would use IP_ADD_SOURCE_MEMBERSHIP for each source
-            print("Note: Source-specific multicast group join not implemented for \(sources.count) sources")
+            throw TransportError.notSupported("Source-specific multicast group join not yet implemented for \(sources.count) sources")
         }
         
         // In a real implementation, we would:
