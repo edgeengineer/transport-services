@@ -129,7 +129,7 @@ struct MessagePriorityTests {
     func connectionGroupPriority() async throws {
         // Skip this test for now - it's complex and needs proper multi-connection setup
         // This is a placeholder for future implementation
-        #expect(true)
+        #expect(Bool(true))
     }
     
     @Test("Final message flag")

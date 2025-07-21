@@ -83,7 +83,7 @@ struct RendezvousTests {
         // Simulate ICE-like scenario with multiple candidates
         let port1 = try await TestUtils.getAvailablePort()
         let port2 = try await TestUtils.getAvailablePort()
-        let port3 = try await TestUtils.getAvailablePort()
+        _ = try await TestUtils.getAvailablePort()
         
         // Peer 1 with multiple local candidates
         var peer1Candidate1 = LocalEndpoint(kind: .host("127.0.0.1"))

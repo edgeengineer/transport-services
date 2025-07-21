@@ -146,7 +146,7 @@ struct AdvancedConnectionTests {
             (.constantRate, "CBR message")
         ]
         
-        for (profile, text) in profiles {
+        for (_, text) in profiles {
             // Set capacity profile (would need to be implemented)
             // await clientConnection.setCapacityProfile(profile)
             
