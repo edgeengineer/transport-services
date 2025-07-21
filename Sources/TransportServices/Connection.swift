@@ -44,9 +44,9 @@ public actor Connection: CustomStringConvertible, Sendable {
     
     // MARK: - Internal Implementation
     
-    /// The bridge to the internal implementation
+    /// The internal implementation
     /// This is set by the Transport Services implementation when creating connections
-    internal var _bridge: ConnectionBridge?
+    internal var _impl: ConnectionImpl?
     
     /// Cached ID for nonisolated access
     private let _id: UUID
@@ -56,10 +56,9 @@ public actor Connection: CustomStringConvertible, Sendable {
         self._id = UUID()
     }
     
-    /// Internal method to set the bridge
-    internal func setBridge(_ bridge: ConnectionBridge) async {
-        self._bridge = bridge
-        bridge.setOwningConnection(self)
+    /// Internal method to set the implementation
+    internal func setImpl(_ impl: ConnectionImpl) async {
+        self._impl = impl
     }
     
     // MARK: - Identity & State
@@ -69,7 +68,7 @@ public actor Connection: CustomStringConvertible, Sendable {
     /// This immutable UUID enables dictionary lookups, telemetry, and cancellation tokens.
     /// Each connection has a unique ID that persists throughout its lifetime.
     public var id: UUID { 
-        _bridge?.id ?? _id 
+        _impl?.id ?? _id 
     }
     
     /// The current state of the connection.
@@ -80,7 +79,7 @@ public actor Connection: CustomStringConvertible, Sendable {
     /// - Note: This is a read-only property that reflects the internal state machine.
     public var state: ConnectionState { 
         get async { 
-            await _bridge?.getState() ?? .establishing 
+            await _impl?.state ?? .establishing 
         } 
     }
     
@@ -90,21 +89,21 @@ public actor Connection: CustomStringConvertible, Sendable {
     /// read-only throughout the connection's lifetime.
     public var properties: TransportProperties { 
         get async { 
-            await _bridge?.getProperties() ?? TransportProperties() 
+            await _impl?.properties ?? TransportProperties() 
         } 
     }
     
     /// The remote endpoint this connection is connected to.
     public var remoteEndpoint: RemoteEndpoint { 
         get async { 
-            await _bridge?.getRemoteEndpoint() ?? RemoteEndpoint(kind: .host("")) 
+            await _impl?.remoteEndpoint ?? RemoteEndpoint(kind: .host("")) 
         } 
     }
     
     /// The local endpoint this connection is bound to.
     public var localEndpoint: LocalEndpoint { 
         get async { 
-            await _bridge?.getLocalEndpoint() ?? LocalEndpoint(kind: .host("")) 
+            await _impl?.localEndpoint ?? LocalEndpoint(kind: .host("")) 
         } 
     }
     
@@ -129,10 +128,10 @@ public actor Connection: CustomStringConvertible, Sendable {
     /// try await connection.send(message)
     /// ```
     public func send(_ message: Message) async throws {
-        guard let bridge = _bridge else {
+        guard let impl = _impl else {
             throw TransportError.sendFailure("Connection not initialized")
         }
-        try await bridge.send(message)
+        try await impl.send(message)
     }
     
     /// Sends a partial message on this connection.
@@ -147,10 +146,11 @@ public actor Connection: CustomStringConvertible, Sendable {
     public func sendPartial(_ slice: Data,
                             context: MessageContext,
                             endOfMessage: Bool) async throws {
-        guard let bridge = _bridge else {
+        guard let impl = _impl else {
             throw TransportError.sendFailure("Connection not initialized")
         }
-        try await bridge.sendPartial(slice, context: context, endOfMessage: endOfMessage)
+        let message = Message(slice, context: context)
+        try await impl.send(message)
     }
     
     // MARK: - Receiving
@@ -178,10 +178,10 @@ public actor Connection: CustomStringConvertible, Sendable {
     /// ```
     public func receive(minIncomplete: Int = .max,
                         max: Int = .max) async throws -> Message {
-        guard let bridge = _bridge else {
+        guard let impl = _impl else {
             throw TransportError.receiveFailure("Connection not initialized")
         }
-        return try await bridge.receive(minIncomplete: minIncomplete, max: max)
+        return try await impl.receive()
     }
     
     /// An async stream of incoming messages.
@@ -199,7 +199,22 @@ public actor Connection: CustomStringConvertible, Sendable {
     /// - Note: The stream automatically handles back-pressure by pausing when not consumed.
     public var incomingMessages: AsyncThrowingStream<Message,Error> { 
         get async {
-            _bridge?.createIncomingMessageStream() ?? AsyncThrowingStream { _ in }
+            guard let impl = _impl else {
+                return AsyncThrowingStream { _ in }
+            }
+            return AsyncThrowingStream { continuation in
+                Task {
+                    do {
+                        while await impl.state == .established {
+                            let message = try await impl.receive()
+                            continuation.yield(message)
+                        }
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
         }
     }
     
@@ -223,10 +238,36 @@ public actor Connection: CustomStringConvertible, Sendable {
     /// ```
     public func clone(framer: (any MessageFramer)? = nil,
                       altering transport: TransportProperties? = nil) async throws -> Connection {
-        guard let bridge = _bridge else {
+        guard let impl = _impl else {
             throw TransportError.establishmentFailure("Connection not initialized")
         }
-        return try await bridge.clone(framer: framer, altering: transport)
+        
+        // Ensure this connection is in a group before cloning
+        let group: ConnectionGroup
+        if let existingGroup = await impl.getConnectionGroup() {
+            group = existingGroup
+        } else {
+            // Create a new group for this connection
+            group = ConnectionGroup(
+                properties: await impl.properties,
+                securityParameters: await impl.securityParameters,
+                framers: await impl.framers
+            )
+            await impl.setConnectionGroup(group)
+        }
+        
+        // Add this connection to the group if not already there
+        await group.addConnection(self)
+        
+        // Create the cloned connection
+        let clonedImpl = try await impl.clone(altering: transport, framer: framer)
+        let connection = Connection()
+        await connection.setImpl(clonedImpl)
+        
+        // Add the cloned connection to the group
+        await group.addConnection(connection)
+        
+        return connection
     }
     
     /// All connections in this connection's group.
@@ -235,7 +276,14 @@ public actor Connection: CustomStringConvertible, Sendable {
     /// including this connection itself.
     public var groupedConnections: [Connection] { 
         get async { 
-            await _bridge?.getGroupedConnections() ?? [] 
+            guard let impl = _impl,
+                  let group = await impl.getConnectionGroup() else {
+                return []
+            }
+            
+            // Ensure this connection is in the group
+            await group.addConnection(self)
+            return await group.getAllConnections()
         } 
     }
     
@@ -251,7 +299,7 @@ public actor Connection: CustomStringConvertible, Sendable {
     /// await connection.close()
     /// ```
     public func close() async {
-        await _bridge?.close()
+        await _impl?.close()
     }
     
     /// Gracefully closes all connections in this connection's group.
@@ -259,7 +307,20 @@ public actor Connection: CustomStringConvertible, Sendable {
     /// This is equivalent to calling ``close()`` on each connection in
     /// ``groupedConnections``.
     public func closeGroup() async {
-        await _bridge?.closeGroup()
+        guard let impl = _impl,
+              let group = await impl.getConnectionGroup() else {
+            await _impl?.close()
+            return
+        }
+        
+        let connections = await group.getAllConnections()
+        await withTaskGroup(of: Void.self) { taskGroup in
+            for connection in connections {
+                taskGroup.addTask {
+                    await connection.close()
+                }
+            }
+        }
     }
     
     /// Immediately aborts this connection.
@@ -267,7 +328,7 @@ public actor Connection: CustomStringConvertible, Sendable {
     /// Unlike ``close()``, this immediately terminates the connection without
     /// waiting for pending operations or notifying the peer gracefully.
     public func abort() async {
-        await _bridge?.abort()
+        await _impl?.abort()
     }
     
     /// Immediately aborts all connections in this connection's group.
@@ -275,6 +336,19 @@ public actor Connection: CustomStringConvertible, Sendable {
     /// This is equivalent to calling ``abort()`` on each connection in
     /// ``groupedConnections``.
     public func abortGroup() async {
-        await _bridge?.abortGroup()
+        guard let impl = _impl,
+              let group = await impl.getConnectionGroup() else {
+            await _impl?.abort()
+            return
+        }
+        
+        let connections = await group.getAllConnections()
+        await withTaskGroup(of: Void.self) { taskGroup in
+            for connection in connections {
+                taskGroup.addTask {
+                    await connection.abort()
+                }
+            }
+        }
     }
 }

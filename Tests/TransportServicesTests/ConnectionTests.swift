@@ -36,7 +36,9 @@ struct ConnectionTests {
         try await clientConnection.send(message)
         
         // Receive on server
-        let received = try await serverConnection.receive()
+        let received = try await TestUtils.withTimeout(seconds: 5) {
+            try await serverConnection.receive()
+        }
         #expect(received.data == testData)
         
         // Send response from server to client
@@ -45,7 +47,9 @@ struct ConnectionTests {
         try await serverConnection.send(responseMessage)
         
         // Receive on client
-        let clientReceived = try await clientConnection.receive()
+        let clientReceived = try await TestUtils.withTimeout(seconds: 5) {
+            try await clientConnection.receive()
+        }
         #expect(clientReceived.data == responseData)
         
         // Cleanup

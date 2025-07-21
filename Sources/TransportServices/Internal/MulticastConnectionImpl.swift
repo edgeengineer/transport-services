@@ -63,9 +63,8 @@ actor MulticastConnectionImpl {
         
         await impl.setEstablishedChannel(channel)
         
-        let bridge = ConnectionBridge(impl: impl)
         let connection = Connection()
-        await connection.setBridge(bridge)
+        await connection.setImpl(impl)
         
         return connection
     }
@@ -192,9 +191,8 @@ actor MulticastConnectionImpl {
         // Set connection as established with sender info
         await impl.setEstablishedChannel(channel!) // Use the shared channel
         
-        let bridge = ConnectionBridge(impl: impl)
         let connection = Connection()
-        await connection.setBridge(bridge)
+        await connection.setImpl(impl)
         
         // Add to group
         await group.addConnection(connection)
@@ -356,4 +354,3 @@ private final class MulticastReceiverHandler: ChannelInboundHandler, @unchecked 
         }
     }
 }
-

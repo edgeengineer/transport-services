@@ -38,7 +38,7 @@ struct CleanListenerTests {
         
         // Create multiple clients
         var clientConnections: [Connection] = []
-        for i in 0..<3 {
+        for _ in 0..<3 {
             var clientRemote = RemoteEndpoint(kind: .host("127.0.0.1"))
             clientRemote.port = port
             
@@ -54,7 +54,7 @@ struct CleanListenerTests {
         // Wait for all connections to be accepted
         let serverConnections = try await acceptTask.value
         
-        // Now send messages after all connections are established
+        // Now send unique messages from each client
         for (i, connection) in clientConnections.enumerated() {
             let message = Message(Data("Client \(i)".utf8))
             try await connection.send(message)
@@ -63,12 +63,19 @@ struct CleanListenerTests {
         // Verify we received all connections
         #expect(serverConnections.count == 3)
         
-        // Verify each connection received its message
-        for (i, connection) in serverConnections.enumerated() {
-            let message = try await connection.receive()
+        // Collect all received messages (order may vary)
+        var receivedMessages: Set<String> = []
+        for connection in serverConnections {
+            let message = try await TestUtils.withTimeout(seconds: 5) {
+                try await connection.receive()
+            }
             let text = String(data: message.data, encoding: .utf8) ?? ""
-            #expect(text == "Client \(i)")
+            receivedMessages.insert(text)
         }
+        
+        // Verify we received all expected messages (regardless of order)
+        let expectedMessages: Set<String> = ["Client 0", "Client 1", "Client 2"]
+        #expect(receivedMessages == expectedMessages)
         
         // Cleanup
         for connection in clientConnections {

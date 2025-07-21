@@ -8,8 +8,9 @@ import NIOPosix
 
 /// Main implementation manager for Transport Services using SwiftNIO.
 ///
-/// This singleton manages the event loop groups and provides factory methods
-/// for creating connections and listeners.
+/// This class manages event loop groups and provides factory methods
+/// for creating connections and listeners. It can be used as a singleton
+/// for production or created per-test-suite for testing.
 actor TransportServicesImpl {
     
     // MARK: - Singleton
@@ -19,18 +20,46 @@ actor TransportServicesImpl {
     // MARK: - Properties
     
     private let eventLoopGroup: MultiThreadedEventLoopGroup
+    private var isShutdown = false
     
     // MARK: - Initialization
     
-    private init() {
+    /// Creates a new TransportServicesImpl instance
+    /// - Parameter numberOfThreads: Number of threads for the event loop group. Defaults to system core count.
+    init(numberOfThreads: Int? = nil) {
         // Create a multi-threaded event loop group
-        // Using system core count for optimal performance
-        self.eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        let threadCount = numberOfThreads ?? System.coreCount
+        self.eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: threadCount)
     }
     
     deinit {
-        // Shutdown the event loop group
-        try? eventLoopGroup.syncShutdownGracefully()
+        // Shutdown the event loop group if not already shut down
+        if !isShutdown {
+            try? eventLoopGroup.syncShutdownGracefully()
+        }
+    }
+    
+    // MARK: - Shutdown
+    
+    /// Shuts down the transport services implementation
+    /// This should be called when the application is terminating
+    /// or during test cleanup to ensure proper resource cleanup
+    func shutdown() async throws {
+        guard !isShutdown else { return }
+        isShutdown = true
+        try await eventLoopGroup.shutdownGracefully()
+    }
+    
+    /// Synchronous shutdown for use in deinit or synchronous contexts
+    func syncShutdown() throws {
+        guard !isShutdown else { return }
+        isShutdown = true
+        try eventLoopGroup.syncShutdownGracefully()
+    }
+    
+    /// Checks if the implementation has been shut down
+    var hasShutdown: Bool {
+        isShutdown
     }
     
     // MARK: - Connection Creation
@@ -74,10 +103,9 @@ actor TransportServicesImpl {
         // Establish the connection
         try await impl.establish(to: remoteEndpoint, from: localEndpoint)
         
-        // Create bridge and connection
-        let bridge = ConnectionBridge(impl: impl)
+        // Create connection and set implementation
         let connection = Connection()
-        await connection.setBridge(bridge)
+        await connection.setImpl(impl)
         return connection
     }
     
@@ -111,10 +139,9 @@ actor TransportServicesImpl {
             firstMessage: firstMessage
         )
         
-        // Create bridge and connection
-        let bridge = ConnectionBridge(impl: impl)
+        // Create connection and set implementation
         let connection = Connection()
-        await connection.setBridge(bridge)
+        await connection.setImpl(impl)
         return connection
     }
     
@@ -189,4 +216,3 @@ actor TransportServicesImpl {
         return try await multicastImpl.establishReceiver()
     }
 }
-

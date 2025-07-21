@@ -230,9 +230,8 @@ actor RendezvousImpl {
             // [Rendezvous] Outgoing connection established successfully")
             
             // Create the connection
-            let bridge = ConnectionBridge(impl: impl)
             let connection = Connection()
-            await connection.setBridge(bridge)
+            await connection.setImpl(impl)
             
             // First successful connection wins
             await self.handleSuccessfulConnection(connection)
@@ -278,9 +277,8 @@ actor RendezvousImpl {
             return
         }
         
-        let bridge = ConnectionBridge(impl: impl)
         let connection = Connection()
-        await connection.setBridge(bridge)
+        await connection.setImpl(impl)
         
         await handleSuccessfulConnection(connection)
     }

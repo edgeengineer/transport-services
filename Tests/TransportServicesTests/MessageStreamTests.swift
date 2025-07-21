@@ -65,12 +65,16 @@ struct MessageStreamTests {
         
         // With length-prefix framing, each sendPartial creates a separate message
         // Receive first message
-        let received1 = try await serverConnection.receive()
+        let received1 = try await TestUtils.withTimeout(seconds: 5) {
+            try await serverConnection.receive()
+        }
         let text1 = String(data: received1.data, encoding: .utf8) ?? ""
         #expect(text1 == "Hello, ")
         
         // Receive second message
-        let received2 = try await serverConnection.receive()
+        let received2 = try await TestUtils.withTimeout(seconds: 5) {
+            try await serverConnection.receive()
+        }
         let text2 = String(data: received2.data, encoding: .utf8) ?? ""
         #expect(text2 == "World!")
         
@@ -100,8 +104,12 @@ struct MessageStreamTests {
         try await clientConnection.send(lowPriorityMessage)
         
         // Receive messages
-        let msg1 = try await serverConnection.receive()
-        let msg2 = try await serverConnection.receive()
+        let msg1 = try await TestUtils.withTimeout(seconds: 5) {
+            try await serverConnection.receive()
+        }
+        let msg2 = try await TestUtils.withTimeout(seconds: 5) {
+            try await serverConnection.receive()
+        }
         
         // Verify messages received (order may vary based on implementation)
         let texts = [

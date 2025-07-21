@@ -41,7 +41,7 @@ enum TestUtils {
         }
     }
     
-    /// Creates a client-server pair on an available port
+    /// Creates a client-server pair on an available port using the default transport services implementation
     static func createClientServerPair() async throws -> (client: Connection, server: Connection, listener: Listener) {
         let port = try await getAvailablePort()
         
@@ -76,7 +76,7 @@ enum TestUtils {
             transport: TransportProperties()
         )
         
-        let clientConnection = try await clientPreconnection.initiate(timeout: .seconds(5))
+        let clientConnection = try await clientPreconnection.initiate(timeout: Duration.seconds(5))
         let serverConnection = try await serverTask.value
         
         return (clientConnection, serverConnection, listener)
@@ -98,5 +98,62 @@ enum TestUtils {
         }
         
         throw TransportError.establishmentFailure("Timeout waiting for condition")
+    }
+    
+    /// Executes an async operation with a timeout
+    static func withTimeout<T: Sendable>(
+        seconds: TimeInterval,
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask {
+                try await operation()
+            }
+            
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw TransportError.establishmentFailure("Operation timed out after \(seconds) seconds")
+            }
+            
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
+    }
+}
+
+/// Test suite base class that provides per-suite transport services lifecycle
+actor TestSuiteBase {
+    private let transportServices: TransportServicesImpl
+    
+    init() {
+        // Create a dedicated transport services instance for this test suite
+        self.transportServices = TransportServicesImpl(numberOfThreads: 2)
+    }
+    
+    /// Gets the transport services instance for this test suite
+    func getTransportServices() -> TransportServicesImpl {
+        return transportServices
+    }
+    
+    /// Creates a client-server pair using this suite's transport services
+    func createClientServerPair() async throws -> (client: Connection, server: Connection, listener: Listener) {
+        // For now, use the default implementation since we need to modify Preconnection
+        // to support dependency injection
+        return try await TestUtils.createClientServerPair()
+    }
+    
+    /// Shuts down the transport services for this test suite
+    func shutdown() async throws {
+        try await transportServices.shutdown()
+    }
+    
+    deinit {
+        // Ensure shutdown in case it wasn't called explicitly
+        // Use weak reference to avoid capture issues
+        let services = transportServices
+        Task { [services] in
+            try? await services.shutdown()
+        }
     }
 }

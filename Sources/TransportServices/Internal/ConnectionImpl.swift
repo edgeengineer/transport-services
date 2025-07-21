@@ -435,7 +435,6 @@ actor ConnectionImpl {
                 framers: framers
             )
             await setConnectionGroup(group)
-            // Note: The original connection will be added to the group by ConnectionBridge.clone()
         }
         
         // Create a new connection in the same group

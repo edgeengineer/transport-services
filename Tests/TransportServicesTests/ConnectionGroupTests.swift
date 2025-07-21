@@ -74,7 +74,9 @@ struct ConnectionGroupTests {
         // Server should receive both messages (one on each connection)
         var receivedTexts: [String] = []
         for connection in serverConnections {
-            let msg = try await connection.receive()
+            let msg = try await TestUtils.withTimeout(seconds: 5) {
+                try await connection.receive()
+            }
             let text = String(data: msg.data, encoding: .utf8) ?? ""
             receivedTexts.append(text)
         }

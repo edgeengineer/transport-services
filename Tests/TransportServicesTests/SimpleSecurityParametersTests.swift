@@ -96,11 +96,11 @@ struct SimpleSecurityParametersTests {
         var params = SecurityParameters(callbacks: callbacks)
         
         // Callbacks should be set
-        #expect(true) // We can't easily test equality of callbacks
+        #expect(Bool(true)) // We can't easily test equality of callbacks
         
         let newCallbacks = SecurityCallbacks()
         params.callbacks = newCallbacks
-        #expect(true)
+        #expect(Bool(true))
     }
     
     @Test("Complete configuration")

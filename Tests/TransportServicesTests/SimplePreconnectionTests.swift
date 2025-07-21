@@ -17,13 +17,13 @@ struct SimplePreconnectionTests {
         var remoteEndpoint = RemoteEndpoint(kind: .host("example.com"))
         remoteEndpoint.port = 443
         
-        let preconnection = Preconnection(
+        let _ = Preconnection(
             local: [localEndpoint],
             remote: [remoteEndpoint]
         )
-        
+
         // Test that preconnection was created successfully
-        #expect(true)
+        #expect(Bool(true))
     }
     
     @Test("Create preconnection for client")
@@ -31,9 +31,9 @@ struct SimplePreconnectionTests {
         var remoteEndpoint = RemoteEndpoint(kind: .host("httpbin.org"))
         remoteEndpoint.port = 80
         
-        let preconnection = Preconnection(remote: [remoteEndpoint])
+        let _ = Preconnection(remote: [remoteEndpoint])
         
-        #expect(true)
+        #expect(Bool(true))
     }
     
     @Test("Create preconnection for server")
@@ -41,9 +41,9 @@ struct SimplePreconnectionTests {
         var localEndpoint = LocalEndpoint(kind: .host("0.0.0.0"))
         localEndpoint.port = 8080
         
-        let preconnection = Preconnection(local: [localEndpoint])
+        let _ = Preconnection(local: [localEndpoint])
         
-        #expect(true)
+        #expect(Bool(true))
     }
     
     @Test("Preconnection with transport properties")
@@ -55,12 +55,12 @@ struct SimplePreconnectionTests {
         var remoteEndpoint = RemoteEndpoint(kind: .host("example.com"))
         remoteEndpoint.port = 443
         
-        let preconnection = Preconnection(
+        let _ = Preconnection(
             remote: [remoteEndpoint],
             transport: properties
         )
         
-        #expect(true)
+        #expect(Bool(true))
     }
     
     @Test("Preconnection validation for initiate")
@@ -99,7 +99,7 @@ struct SimplePreconnectionTests {
         let framer = DelimiterFramer.lineDelimited
         await preconnection.add(framer: framer)
         
-        #expect(true)
+        #expect(Bool(true))
     }
     
     @Test("Transport property convenience methods")
@@ -114,11 +114,11 @@ struct SimplePreconnectionTests {
         remoteEndpoint.port = 80
         
         // Should be able to create preconnections with all property types
-        let preconnection1 = Preconnection(remote: [remoteEndpoint], transport: reliable)
-        let preconnection2 = Preconnection(remote: [remoteEndpoint], transport: message)
-        let preconnection3 = Preconnection(remote: [remoteEndpoint], transport: datagram)
-        let preconnection4 = Preconnection(remote: [remoteEndpoint], transport: lowLatency)
+        let _ = Preconnection(remote: [remoteEndpoint], transport: reliable)
+        let _ = Preconnection(remote: [remoteEndpoint], transport: message)
+        let _ = Preconnection(remote: [remoteEndpoint], transport: datagram)
+        let _ = Preconnection(remote: [remoteEndpoint], transport: lowLatency)
         
-        #expect(true)
+        #expect(Bool(true))
     }
 }

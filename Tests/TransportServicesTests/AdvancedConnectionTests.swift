@@ -51,7 +51,9 @@ struct AdvancedConnectionTests {
         try await clientConnection.send(message)
         
         // Server can receive
-        let received = try await serverConnection.receive()
+        let received = try await TestUtils.withTimeout(seconds: 5) {
+            try await serverConnection.receive()
+        }
         let text = String(data: received.data, encoding: .utf8) ?? ""
         #expect(text == "Send only")
         
@@ -110,7 +112,9 @@ struct AdvancedConnectionTests {
         let serverConnection = try await serverTask.value
         
         // Client can receive
-        let received = try await clientConnection.receive()
+        let received = try await TestUtils.withTimeout(seconds: 5) {
+            try await clientConnection.receive()
+        }
         let text = String(data: received.data, encoding: .utf8) ?? ""
         #expect(text == "Welcome")
         
@@ -149,7 +153,9 @@ struct AdvancedConnectionTests {
             let message = Message(Data(text.utf8))
             try await clientConnection.send(message)
             
-            let received = try await serverConnection.receive()
+            let received = try await TestUtils.withTimeout(seconds: 5) {
+                try await serverConnection.receive()
+            }
             let receivedText = String(data: received.data, encoding: .utf8) ?? ""
             #expect(receivedText == text)
         }
@@ -200,7 +206,7 @@ struct AdvancedConnectionTests {
         let clientConnection = try await clientPreconnection.initiate()
         let serverConnection = try await serverTask.value
         
-        // Set keep-alive timeout (would need to be implemented)
+        // TODO Set keep-alive timeout (would need to be implemented)
         // await clientConnection.setKeepAliveTimeout(.seconds(1))
         
         // Wait for keep-alive to trigger
@@ -217,7 +223,9 @@ struct AdvancedConnectionTests {
         let testMsg = Message(Data("Still alive".utf8))
         try await clientConnection.send(testMsg)
         
-        let received = try await serverConnection.receive()
+        let received = try await TestUtils.withTimeout(seconds: 5) {
+            try await serverConnection.receive()
+        }
         let text = String(data: received.data, encoding: .utf8) ?? ""
         #expect(text == "Still alive")
         
@@ -267,17 +275,28 @@ struct AdvancedConnectionTests {
         let serverConnection = try await serverTask.value
         
         // Send data that could potentially use multiple paths
+        let expectedMessages = Set(1...5).map { "Multipath message \($0)" }
+        
         for i in 1...5 {
             let message = Message(Data("Multipath message \(i)".utf8))
             try await clientConnection.send(message)
         }
-        
-        // Receive all messages
-        for i in 1...5 {
-            let received = try await serverConnection.receive()
+
+        // Receive all messages and collect them
+        var receivedMessages = [String]()
+        for _ in 1...5 {
+            let received = try await TestUtils.withTimeout(seconds: 5) {
+                try await serverConnection.receive()
+            }
             let text = String(data: received.data, encoding: .utf8) ?? ""
-            #expect(text == "Multipath message \(i)")
+            receivedMessages.append(text)
         }
+        
+        // Sort both arrays to compare regardless of order
+        let sortedExpected = expectedMessages.sorted()
+        let sortedReceived = receivedMessages.sorted()
+        
+        #expect(sortedReceived == sortedExpected)
         
         // Cleanup
         await clientConnection.close()

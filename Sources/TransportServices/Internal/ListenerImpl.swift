@@ -74,32 +74,37 @@ actor ListenerImpl {
             throw TransportError.establishmentFailure("No local endpoints specified")
         }
         
-        // Start listening first to ensure the server is ready
-        try await startListening(on: localEndpoint)
-        
-        // Then create and return the stream for accepted connections
+        // Create the stream FIRST, before starting to listen
+        // This ensures the continuation is ready when connections arrive
         let stream = AsyncThrowingStream<Connection, Error> { continuation in
             self.streamContinuation = continuation
         }
+        
+        // Now start listening - any connections that arrive will have a valid continuation
+        try await startListening(on: localEndpoint)
         
         return stream
     }
     
     private func startListening(on localEndpoint: LocalEndpoint) async throws {
+            // Store a reference to self that can be captured
+            let listenerRef = self
+            
             let bootstrap = ServerBootstrap(group: eventLoopGroup)
                 .serverChannelOption(ChannelOptions.backlog, value: 256)
                 .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
                 .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
                 .childChannelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: properties.disableNagle ? 1 : 0)
-                .childChannelInitializer { [weak self] channel in
-                    guard let self = self else {
-                        return channel.eventLoop.makeFailedFuture(TransportError.establishmentFailure("Listener deallocated"))
+                .childChannelInitializer { channel in
+                    // Process the channel immediately when it's accepted
+                    let promise = channel.eventLoop.makePromise(of: Void.self)
+                    
+                    Task {
+                        await listenerRef.handleAcceptedChannel(channel)
+                        promise.succeed(())
                     }
                     
-                    // We'll handle the accepted channel after it's active
-                    // For now, just add a handler that will notify us when the channel is active
-                    let acceptHandler = AcceptedConnectionHandler(listener: self)
-                    return channel.pipeline.addHandler(acceptHandler)
+                    return promise.futureResult
                 }
             
             // Bind to the local endpoint
@@ -150,9 +155,8 @@ actor ListenerImpl {
             try await configureAcceptedChannel(channel, for: connectionImpl)
             
             // Create the public Connection
-            let bridge = ConnectionBridge(impl: connectionImpl)
             let connection = Connection()
-            await connection.setBridge(bridge)
+            await connection.setImpl(connectionImpl)
             
             // Deliver the connection
             streamContinuation?.yield(connection)
@@ -165,13 +169,25 @@ actor ListenerImpl {
     
     /// Configures the accepted channel pipeline
     private func configureAcceptedChannel(_ channel: Channel, for impl: ConnectionImpl) async throws {
-        // Add TLS if required
-        if !securityParameters.allowedProtocols.isEmpty && !securityParameters.serverCertificates.isEmpty {
-            // Configure TLS with the provided certificates
+        // Extract values outside the closure to avoid actor isolation issues
+        let needsTLS = !securityParameters.allowedProtocols.isEmpty && !securityParameters.serverCertificates.isEmpty
+        let credentials: ([NIOSSLCertificateSource], NIOSSLPrivateKeySource)?
+        let alpnProtocols = securityParameters.alpn
+        
+        if needsTLS {
             do {
-                // Get certificate chain and private key
-                let (certificateChain, privateKey) = try extractServerCredentials()
-                
+                credentials = try extractServerCredentials()
+            } catch {
+                print("Warning: Failed to extract TLS credentials: \(error)")
+                credentials = nil
+            }
+        } else {
+            credentials = nil
+        }
+        
+        // Add TLS if required
+        if let (certificateChain, privateKey) = credentials {
+            do {
                 // Create TLS configuration
                 var tlsConfiguration = TLSConfiguration.makeServerConfiguration(
                     certificateChain: certificateChain,
@@ -179,8 +195,8 @@ actor ListenerImpl {
                 )
                 
                 // Configure ALPN if provided
-                if !securityParameters.alpn.isEmpty {
-                    tlsConfiguration.applicationProtocols = securityParameters.alpn
+                if !alpnProtocols.isEmpty {
+                    tlsConfiguration.applicationProtocols = alpnProtocols
                 }
                 
                 // Create and add the TLS handler
@@ -190,8 +206,7 @@ actor ListenerImpl {
             } catch {
                 // Log TLS configuration error and continue without TLS
                 print("Warning: Failed to configure TLS: \(error)")
-                // Optionally throw if TLS is mandatory
-                // throw TransportError.establishmentFailure("TLS configuration failed: \(error)")
+                // Continue without TLS for non-TLS connections
             }
         }
         
@@ -346,3 +361,4 @@ private final class AcceptedConnectionHandler: ChannelInboundHandler, @unchecked
         context.close(promise: nil)
     }
 }
+

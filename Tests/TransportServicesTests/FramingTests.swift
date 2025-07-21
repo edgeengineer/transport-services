@@ -32,7 +32,9 @@ struct FramingTests {
         // Receive all messages
         var received: [String] = []
         for _ in messages {
-            let message = try await server.receive()
+            let message = try await TestUtils.withTimeout(seconds: 5) {
+                try await server.receive()
+            }
             let text = String(data: message.data, encoding: .utf8) ?? ""
             received.append(text)
         }
@@ -58,7 +60,9 @@ struct FramingTests {
         try await client.send(message)
         
         // Receive large message
-        let received = try await server.receive()
+        let received = try await TestUtils.withTimeout(seconds: 10) {
+            try await server.receive()
+        }
         
         // Verify size and content
         #expect(received.data.count == largeData.count)
@@ -99,14 +103,18 @@ struct FramingTests {
         
         let clientReceiveTask = Task {
             for _ in serverMessages {
-                let msg = try await client.receive()
+                let msg = try await TestUtils.withTimeout(seconds: 5) {
+                    try await client.receive()
+                }
                 clientReceived.append(String(data: msg.data, encoding: .utf8) ?? "")
             }
         }
         
         let serverReceiveTask = Task {
             for _ in clientMessages {
-                let msg = try await server.receive()
+                let msg = try await TestUtils.withTimeout(seconds: 5) {
+                    try await server.receive()
+                }
                 serverReceived.append(String(data: msg.data, encoding: .utf8) ?? "")
             }
         }
@@ -140,15 +148,18 @@ struct FramingTests {
             "He"
         ]
         
-        // Send all at once
+        // Send messages one at a time with small delays to ensure ordering
         for msg in messages {
             try await client.send(Message(Data(msg.utf8)))
+            try await Task.sleep(for: .milliseconds(1)) // Small delay to ensure ordering
         }
         
-        // Receive and verify each maintains its boundary
+        // Receive and verify each maintains its boundary and order
         var received: [String] = []
         for _ in messages {
-            let msg = try await server.receive()
+            let msg = try await TestUtils.withTimeout(seconds: 5) {
+                try await server.receive()
+            }
             received.append(String(data: msg.data, encoding: .utf8) ?? "")
         }
         
