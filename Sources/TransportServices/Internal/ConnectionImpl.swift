@@ -54,6 +54,9 @@ actor ConnectionImpl {
     /// Connection group this connection belongs to
     private var connectionGroup: ConnectionGroup?
     
+    /// Whether a final message has been sent on this connection
+    private var finalMessageSent: Bool = false
+    
     // MARK: - Initialization
     
     init(id: UUID,
@@ -298,6 +301,11 @@ actor ConnectionImpl {
             throw TransportError.sendFailure("Connection not ready")
         }
         
+        // Check if a final message has already been sent
+        guard !finalMessageSent else {
+            throw TransportError.sendFailure("Cannot send after final message")
+        }
+        
         // Check if connection allows sending
         guard properties.direction != .recvOnly else {
             throw TransportError.sendFailure("Cannot send on receive-only connection")
@@ -305,6 +313,11 @@ actor ConnectionImpl {
         
         guard let channel = channel else {
             throw TransportError.sendFailure("No channel available")
+        }
+        
+        // Check if this message is marked as final
+        if message.context.final {
+            finalMessageSent = true
         }
         
         let sendId = UUID()
@@ -477,6 +490,7 @@ private final class ConnectionHandler: ChannelDuplexHandler, @unchecked Sendable
         let message = unwrapInboundIn(data)
         let capturedImpl = impl
         
+        // Handle the message directly without additional queuing
         Task { @Sendable in
             await capturedImpl.handleIncomingMessage(message)
         }

@@ -5,6 +5,60 @@ import FoundationEssentials
 import Foundation
 #endif
 
+// MARK: - Message Serialization
+
+private func serializeMessage(_ message: Message) -> Data {
+    // Simple serialization format:
+    // [1 byte: flags] [4 bytes: data length] [data]
+    // flags bit 0: safelyReplayable
+    // flags bit 1: final
+    
+    var flags: UInt8 = 0
+    if message.context.safelyReplayable {
+        flags |= 0x01
+    }
+    if message.context.final {
+        flags |= 0x02
+    }
+    
+    var result = Data()
+    result.append(flags)
+    
+    let dataLength = UInt32(message.data.count)
+    result.append(contentsOf: withUnsafeBytes(of: dataLength.bigEndian) { Array($0) })
+    result.append(message.data)
+    
+    return result
+}
+
+private func deserializeMessage(from data: Data) -> Message {
+    guard data.count >= 5 else {
+        // Fallback for malformed data
+        return Message(data)
+    }
+    
+    let flags = data[0]
+    
+    // Manually read the 4-byte length to avoid alignment issues
+    let dataLength = UInt32(data[1]) << 24 |
+                    UInt32(data[2]) << 16 |
+                    UInt32(data[3]) << 8 |
+                    UInt32(data[4])
+    
+    guard data.count >= 5 + dataLength else {
+        // Fallback for malformed data
+        return Message(data)
+    }
+    
+    let messageData = Data(data[5..<(5 + Int(dataLength))])
+    
+    var context = MessageContext()
+    context.safelyReplayable = (flags & 0x01) != 0
+    context.final = (flags & 0x02) != 0
+    
+    return Message(messageData, context: context)
+}
+
 /// Simple message framing handler with length-prefix framing
 final class SimpleFramingHandler: ChannelDuplexHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
@@ -54,7 +108,10 @@ final class SimpleFramingHandler: ChannelDuplexHandler, @unchecked Sendable {
             let messageStart = inboundBuffer.index(inboundBuffer.startIndex, offsetBy: 4)
             let messageEnd = inboundBuffer.index(inboundBuffer.startIndex, offsetBy: totalSize)
             let messageData = inboundBuffer[messageStart..<messageEnd]
-            messages.append(Message(Data(messageData)))
+            
+            // Deserialize message with context
+            let message = deserializeMessage(from: Data(messageData))
+            messages.append(message)
             
             // Remove processed data from buffer
             inboundBuffer = Data(inboundBuffer.dropFirst(totalSize))
@@ -72,7 +129,10 @@ final class SimpleFramingHandler: ChannelDuplexHandler, @unchecked Sendable {
     
     func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
         let message = unwrapOutboundIn(data)
-        let length = UInt32(message.data.count)
+        
+        // Serialize message with context
+        let serializedMessage = serializeMessage(message)
+        let length = UInt32(serializedMessage.count)
         
         // Allow empty messages but check max size
         guard length <= maxMessageSize else {
@@ -85,10 +145,8 @@ final class SimpleFramingHandler: ChannelDuplexHandler, @unchecked Sendable {
         // Write 4-byte length in big-endian
         buffer.writeInteger(length, endianness: .big, as: UInt32.self)
         
-        // Write message data if not empty
-        if !message.data.isEmpty {
-            buffer.writeBytes(message.data)
-        }
+        // Write serialized message data
+        buffer.writeBytes(serializedMessage)
         
         context.write(wrapOutboundOut(buffer), promise: promise)
     }
