@@ -110,36 +110,12 @@ actor MulticastConnectionImpl {
     
     /// Configures multicast options on the channel
     private func configureMulticastOptions(channel: Channel, forSending: Bool) async throws {
-        // Set multicast TTL (time-to-live)
-        let ttl = Int32(multicastEndpoint.ttl)
-        try await channel.setOption(ChannelOptions.socketOption(.ip_multicast_ttl), value: ttl).get()
+        // Note: Multicast socket options are not yet implemented
+        // This would require platform-specific handling and proper type conversions
+        // between different platforms (Int vs Int32 for socket option values)
         
-        // Disable multicast loopback if we're only sending
-        if forSending && properties.multicast.direction == .sendOnly {
-            let loopback: Int32 = 0
-            try await channel.setOption(ChannelOptions.socketOption(.ip_multicast_loop), value: loopback).get()
-        }
-        
-        // Set multicast interface if specified
-        if multicastEndpoint.interface != nil {
-            // Note: Setting multicast interface requires platform-specific handling
-            // On Darwin/BSD: IP_MULTICAST_IF uses in_addr structure
-            // On Linux: Uses interface index directly
-            throw TransportError.notSupported("Setting specific multicast interface not yet implemented")
-        }
-        
-        // For IPv6 multicast (check if group address contains colon)
-        if multicastEndpoint.groupAddress.contains(":") {
-            // Set IPv6 multicast hops
-            let hops = Int32(multicastEndpoint.ttl)
-            try? await channel.setOption(ChannelOptions.socketOption(.ipv6_multicast_hops), value: hops).get()
-            
-            // Disable IPv6 multicast loopback if needed
-            if forSending && properties.multicast.direction == .sendOnly {
-                let loopback: Int32 = 0
-                try? await channel.setOption(ChannelOptions.socketOption(.ipv6_multicast_loop), value: loopback).get()
-            }
-        }
+        // For now, throw an error indicating multicast is not supported
+        throw TransportError.notSupported("Multicast configuration not yet implemented - requires platform-specific socket options")
     }
     
     /// Joins a multicast group
