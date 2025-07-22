@@ -195,8 +195,10 @@ actor ListenerImpl {
             
             // Create and add the TLS handler
             let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
-            let tlsHandler = NIOSSLServerHandler(context: sslContext)
-            try await channel.pipeline.addHandler(tlsHandler, position: .first).get()
+            try await channel.eventLoop.flatSubmit {
+                let tlsHandler = NIOSSLServerHandler(context: sslContext)
+                return channel.pipeline.addHandler(tlsHandler, position: .first)
+            }.get()
         }
         
         // Add message framing handler

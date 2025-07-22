@@ -164,8 +164,10 @@ actor RendezvousImpl {
                     }
                     
                     let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
-                    let tlsHandler = NIOSSLServerHandler(context: sslContext)
-                    try await channel.pipeline.addHandler(tlsHandler).get()
+                    try await channel.eventLoop.flatSubmit {
+                        let tlsHandler = NIOSSLServerHandler(context: sslContext)
+                        return channel.pipeline.addHandler(tlsHandler)
+                    }.get()
                 }
                 
                 // Add message framing
