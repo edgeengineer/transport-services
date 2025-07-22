@@ -260,15 +260,19 @@ actor ConnectionImpl {
                     }
                     
                     let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
+                    // Configure the pipeline synchronously on the event loop
                     future = future.flatMap { _ in
-                        do {
-                            let tlsHandler = try NIOSSLClientHandler(
-                                context: sslContext,
-                                serverHostname: serverHostname
-                            )
-                            return channel.pipeline.addHandler(tlsHandler)
-                        } catch {
-                            return channel.eventLoop.makeFailedFuture(error)
+                        channel.eventLoop.submit {
+                            do {
+                                let tlsHandler = try NIOSSLClientHandler(
+                                    context: sslContext,
+                                    serverHostname: serverHostname
+                                )
+                                try channel.pipeline.syncOperations.addHandler(tlsHandler)
+                            } catch {
+                                // Error will be caught by submit
+                                throw error
+                            }
                         }
                     }
                 } catch {
