@@ -59,7 +59,8 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         // Handle state transitions according to RFC 9622 Section 11
         // Fire events through the owner connection if available
         if let owner = ownerConnection {
-            Task {
+            // Update owner state asynchronously to avoid actor executor issues
+            Task.detached {
                 await owner.updateState(newState)
             }
             
@@ -115,7 +116,7 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         setupConnectionHandlers(connection)
         
         // Start connection with timeout support
-        let timeout: TimeInterval? = nil // TODO: Add timeout support to preconnection
+        let timeout: TimeInterval? = preconnection.transportProperties.connTimeout
         
         // Set up state handler and wait for connection
         let connectionReady = AsyncStream<Result<Void, Error>> { continuation in

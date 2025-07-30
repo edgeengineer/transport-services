@@ -21,7 +21,7 @@ struct ConnectionTests {
         let eventCollector = EventCollector()
         
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "1.1.1.1"; ep.port = 443; return ep }()]
         )
         
         let connection = try await withTimeout(.seconds(5), operation: "connection initiation") {
@@ -60,7 +60,7 @@ struct ConnectionTests {
         let eventCollector = EventCollector()
         
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "1.1.1.1"; ep.port = 443; return ep }()]
         )
         
         let connection = try await withTimeout(.seconds(5), operation: "connection initiation") {
@@ -99,7 +99,7 @@ struct ConnectionTests {
         let eventCollector = EventCollector()
         
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "httpbin.org", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "1.1.1.1"; ep.port = 80; return ep }()]
         )
         
         var secParams = preconnection.securityParameters
@@ -167,7 +167,7 @@ struct ConnectionTests {
     @Test("Send fails on closed connection")
     func testSendOnClosedConnection() async throws {
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "1.1.1.1"; ep.port = 443; return ep }()]
         )
         
         let connection = try await withTimeout(.seconds(5), operation: "connection initiation") {
@@ -192,7 +192,7 @@ struct ConnectionTests {
     @Test("Receive fails on closed connection")
     func testReceiveOnClosedConnection() async throws {
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "1.1.1.1"; ep.port = 443; return ep }()]
         )
         
         let connection = try await withTimeout(.seconds(5), operation: "connection initiation") {
@@ -217,7 +217,7 @@ struct ConnectionTests {
         let eventCollector = EventCollector()
         
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "httpbin.org", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "1.1.1.1"; ep.port = 80; return ep }()]
         )
         
         var secParams = preconnection.securityParameters
@@ -256,7 +256,7 @@ struct ConnectionTests {
     @Test("Connection inherits properties from preconnection")
     func testConnectionInheritsProperties() async throws {
         var preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "1.1.1.1"; ep.port = 443; return ep }()]
         )
         
         // Set custom properties on preconnection
@@ -280,7 +280,7 @@ struct ConnectionTests {
     @Test("Set connection properties")
     func testSetConnectionProperties() async throws {
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "1.1.1.1"; ep.port = 443; return ep }()]
         )
         
         let connection = try await withTimeout(.seconds(5), operation: "connection initiation") {
@@ -311,7 +311,7 @@ struct ConnectionTests {
         let eventCollector1 = EventCollector()
         
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "1.1.1.1"; ep.port = 443; return ep }()]
         )
         
         let connection1 = try await withTimeout(.seconds(5), operation: "connection initiation") {
@@ -361,7 +361,7 @@ struct ConnectionTests {
         let eventCollector = EventCollector()
         
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "invalid.example.com", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "192.0.2.1"; ep.port = 443; return ep }()]
         )
         
         do {
@@ -394,7 +394,7 @@ struct ConnectionTests {
     @Test("Connection group management")
     func testConnectionGroup() async throws {
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "1.1.1.1"; ep.port = 443; return ep }()]
         )
         
         let connection1 = try await withTimeout(.seconds(5), operation: "connection 1") {
@@ -432,7 +432,7 @@ struct ConnectionTests {
     @Test("Add and remove remote endpoints")
     func testEndpointManagement() async throws {
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "1.1.1.1"; ep.port = 443; return ep }()]
         )
         
         let connection = try await withTimeout(.seconds(5), operation: "connection initiation") {
@@ -440,15 +440,15 @@ struct ConnectionTests {
         }
         
         // Add additional remote endpoints
-        let newEndpoints = [
-            RemoteEndpoint.tcp(host: "example.org", port: 443),
-            RemoteEndpoint.tcp(host: "example.net", port: 443)
+        let newEndpoints: [RemoteEndpoint] = [
+            { var ep = RemoteEndpoint(); ep.ipAddress = "8.8.8.8"; ep.port = 443; return ep }(),
+            { var ep = RemoteEndpoint(); ep.ipAddress = "8.8.4.4"; ep.port = 443; return ep }()
         ]
         
         await connection.addRemote(newEndpoints)
         
         // Remove specific endpoints
-        let toRemove = [RemoteEndpoint.tcp(host: "example.org", port: 443)]
+        let toRemove: [RemoteEndpoint] = [{ var ep = RemoteEndpoint(); ep.ipAddress = "8.8.8.8"; ep.port = 443; return ep }()]
         await connection.removeRemote(toRemove)
         
         // Add local endpoints
@@ -469,7 +469,7 @@ struct ConnectionTests {
         let eventCollector = EventCollector()
         
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "httpbin.org", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "1.1.1.1"; ep.port = 80; return ep }()]
         )
         
         var secParams = preconnection.securityParameters
@@ -517,7 +517,7 @@ struct ConnectionTests {
         let eventCollector = EventCollector()
         
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "1.1.1.1"; ep.port = 443; return ep }()]
         )
         
         let connection = try await withTimeout(.seconds(5), operation: "connection initiation") {
@@ -546,7 +546,7 @@ struct ConnectionTests {
         let eventCollector = EventCollector()
         
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 443)]
+            remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "1.1.1.1"; ep.port = 443; return ep }()]
         )
         
         let connection = try await withTimeout(.seconds(5), operation: "connection initiation") {

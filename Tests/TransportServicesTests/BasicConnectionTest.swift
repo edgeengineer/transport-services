@@ -16,9 +16,13 @@ struct BasicConnectionTest {
     
     @Test("Test basic connection establishment")
     func testBasicConnection() async throws {
-        // Create a simple preconnection
+        // Create a simple preconnection with direct IP (1.1.1.1 = Cloudflare)
+        var endpoint = RemoteEndpoint()
+        endpoint.ipAddress = "1.1.1.1"
+        endpoint.port = 80
+        
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 443)]
+            remoteEndpoints: [endpoint]
         )
         
         let eventCollector = EventCollector()
@@ -68,8 +72,12 @@ struct BasicConnectionTest {
     
     @Test("Test connection without event handler")
     func testConnectionNoHandler() async throws {
+        var endpoint = RemoteEndpoint()
+        endpoint.ipAddress = "1.1.1.1" 
+        endpoint.port = 80
+        
         let preconnection = Preconnection(
-            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 443)]
+            remoteEndpoints: [endpoint]
         )
         
         // Should work without event handler

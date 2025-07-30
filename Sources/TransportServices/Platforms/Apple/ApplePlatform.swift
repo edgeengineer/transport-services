@@ -83,7 +83,7 @@ public final class ApplePlatform: Platform {
             case .tcp, .udp, .tls:
                 continue // Supported
             case .quic:
-                if #available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *) {
+                if #available(macOS 14.0, *) {
                     continue // QUIC is supported in newer versions
                 } else {
                     return false
@@ -111,7 +111,7 @@ public final class ApplePlatform: Platform {
                     
                     let networkInterface = NetworkInterface(
                         name: interface.name,
-                        index: 0, // TODO: Get actual interface index
+                        index: Int(interface.index),
                         type: self.convertInterfaceType(interface.type),
                         addresses: addresses,
                         isUp: true, // NWPath only shows available interfaces
