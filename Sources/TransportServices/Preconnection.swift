@@ -115,16 +115,13 @@ public struct Preconnection: Sendable {
             platform: platform
         )
         
-        // Initiate the platform connection
+        // Set the owner connection on the platform connection
+        await platformConnection.setOwnerConnection(connection)
+        
+        // Initiate the platform connection - it will handle state updates and events
         try await withTimeout(timeout) {
             try await platformConnection.initiate()
         }
-        
-        // Update connection state
-        await connection.updateState(ConnectionState.established)
-        
-        // Send Ready event
-        handler(TransportServicesEvent.ready(connection))
         
         return connection
     }

@@ -47,16 +47,14 @@ public actor Connection {
     public func close() async {
         state = .closing
         await platformConnection.close()
-        state = .closed
-        eventHandler(.closed(self))
+        // Platform connection will handle state update and event
     }
     
     /// Abort the connection immediately
     public func abort() {
         state = .closing
         platformConnection.abort()
-        state = .closed
-        eventHandler(.connectionError(self, reason: "Connection aborted"))
+        // Platform connection will handle state update and event
     }
     
     /// Clone this connection to create a new connection with same properties
@@ -74,16 +72,18 @@ public actor Connection {
             platform: platform
         )
         
+        // Set the owner connection on the platform connection
+        await newPlatformConnection.setOwnerConnection(newConnection)
+        
         // Copy connection group membership
         if let group = connectionGroup {
             await group.addConnection(newConnection)
             await newConnection.setGroup(group)
         }
         
-        // Initiate the cloned connection
+        // Initiate the cloned connection - platform will handle events
         do {
             try await newPlatformConnection.initiate()
-            eventHandler(.ready(newConnection))
         } catch {
             eventHandler(.cloneError(self, reason: error.localizedDescription))
             throw error

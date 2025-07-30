@@ -38,4 +38,7 @@ public protocol PlatformConnection: Sendable {
     
     /// Get connection properties
     func getProperty(_ property: ConnectionProperty) async -> Any?
+    
+    /// Set the owner connection for proper event handling
+    func setOwnerConnection(_ connection: Connection?) async
 }

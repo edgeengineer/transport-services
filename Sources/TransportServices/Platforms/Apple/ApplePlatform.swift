@@ -30,6 +30,33 @@ public final class ApplePlatform: Platform {
         return AppleListener(preconnection: preconnection, eventHandler: eventHandler)
     }
     
+    // Support for Rendezvous connections (RFC 9622 Section 7.3)
+    public func createRendezvous(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) async throws -> (any PlatformConnection, any PlatformListener) {
+        // For rendezvous, we need both outgoing connection attempts and incoming listener
+        
+        // Create a listener for incoming connections
+        let listener = AppleListener(preconnection: preconnection, eventHandler: eventHandler)
+        
+        // Create a connection for outgoing attempts
+        let connection = AppleConnection(preconnection: preconnection, eventHandler: eventHandler)
+        
+        // Start the listener
+        try await listener.listen()
+        
+        // Start connection attempts to remote endpoints
+        // Note: Full ICE-style connectivity checks would require more implementation
+        Task {
+            do {
+                try await connection.initiate()
+            } catch {
+                // Connection might fail if peer connects to us first
+                // This is expected in rendezvous scenarios
+            }
+        }
+        
+        return (connection, listener)
+    }
+    
     public func gatherCandidates(preconnection: Preconnection) async throws -> CandidateSet {
         var localCandidates: [LocalCandidate] = []
         var remoteCandidates: [RemoteCandidate] = []
@@ -172,55 +199,102 @@ public final class ApplePlatform: Platform {
     }
     
     private func resolveHostname(_ hostname: String, port: UInt16) async throws -> [SocketAddress] {
+        actor ResolutionState {
+            var hasResolved = false
+            
+            func checkAndSetResolved() -> Bool {
+                if hasResolved { return true }
+                hasResolved = true
+                return false
+            }
+        }
+        
+        // Use DNS resolution via getaddrinfo or similar
+        // For now, use a simplified approach with NWConnection
         return try await withCheckedThrowingContinuation { continuation in
             let host = NWEndpoint.Host(hostname)
             let port = NWEndpoint.Port(integerLiteral: port)
             
-            // Use NWConnection to perform DNS resolution
-            let params = NWParameters()
+            // Create a dummy connection just for DNS resolution
+            let params = NWParameters.udp
             let connection = NWConnection(host: host, port: port, using: params)
             
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    // Extract resolved addresses from the connection
-                    var addresses: [SocketAddress] = []
-                    
-                    // This is a simplified version - in reality we'd need to inspect
-                    // the connection's resolved endpoints
-                    if let endpoint = connection.currentPath?.remoteEndpoint {
-                        switch endpoint {
-                        case let .hostPort(host: resolvedHost, port: resolvedPort):
-                            if case let .ipv4(address) = resolvedHost {
-                                addresses.append(.ipv4(
-                                    address: "\(address.rawValue)",
-                                    port: UInt16(resolvedPort.rawValue)
-                                ))
-                            } else if case let .ipv6(address) = resolvedHost {
-                                addresses.append(.ipv6(
-                                    address: "\(address.rawValue)",
-                                    port: UInt16(resolvedPort.rawValue),
-                                    scopeId: 0
-                                ))
-                            }
-                        default:
-                            break
-                        }
-                    }
-                    
+            let state = ResolutionState()
+            
+            // Add timeout to prevent indefinite hanging
+            let timeoutTask = Task {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                Task {
+                    guard await !state.checkAndSetResolved() else { return }
                     connection.cancel()
-                    continuation.resume(returning: addresses)
-                    
-                case let .failed(error):
-                    connection.cancel()
-                    continuation.resume(throwing: error)
-                    
-                default:
-                    break
+                    continuation.resume(throwing: TransportError.establishmentTimeout)
                 }
             }
             
-            connection.start(queue: .global())
+            connection.stateUpdateHandler = { connectionState in
+                Task {
+                    guard await !state.checkAndSetResolved() else { 
+                        timeoutTask.cancel()
+                        return 
+                    }
+                    
+                    switch connectionState {
+                    case .ready:
+                        timeoutTask.cancel()
+                        // Extract resolved addresses from the connection path
+                        var addresses: [SocketAddress] = []
+                        
+                        if let endpoint = connection.currentPath?.remoteEndpoint {
+                            switch endpoint {
+                            case let .hostPort(host: resolvedHost, port: resolvedPort):
+                                switch resolvedHost {
+                                case let .ipv4(address):
+                                    addresses.append(.ipv4(
+                                        address: "\(address)",
+                                        port: UInt16(resolvedPort.rawValue)
+                                    ))
+                                case let .ipv6(address):
+                                    addresses.append(.ipv6(
+                                        address: "\(address)",
+                                        port: UInt16(resolvedPort.rawValue),
+                                        scopeId: 0
+                                    ))
+                                case .name:
+                                    // Should not happen after resolution
+                                    continuation.resume(throwing: TransportError.resolutionFailed)
+                                    return
+                                @unknown default:
+                                    break
+                                }
+                            default:
+                                break
+                            }
+                        }
+                        
+                        connection.cancel()
+                        
+                        if addresses.isEmpty {
+                            continuation.resume(throwing: TransportError.resolutionFailed)
+                        } else {
+                            continuation.resume(returning: addresses)
+                        }
+                        
+                    case let .failed(error):
+                        timeoutTask.cancel()
+                        connection.cancel()
+                        continuation.resume(throwing: error)
+                        
+                    case .waiting:
+                        // Network might not be available - continue waiting but timeout will catch it
+                        break
+                        
+                    default:
+                        break
+                    }
+                }
+            }
+            
+            connection.start(queue: DispatchQueue(label: "dns.resolution"))
         }
     }
     
