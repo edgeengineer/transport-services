@@ -7,7 +7,8 @@
 
 import Foundation
 
-public enum TransportServicesEvent {
+@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
+public enum TransportServicesEvent: Sendable {
     case ready(Connection)
     case connectionReceived(Listener, Connection)
     case rendezvousDone(Preconnection, Connection)

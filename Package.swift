@@ -5,6 +5,13 @@ import PackageDescription
 
 let package = Package(
     name: "TransportServices",
+    platforms: [
+        .macOS(.v10_15),
+        .iOS(.v17),
+        .tvOS(.v17),
+        .watchOS(.v11),
+        .visionOS(.v1)
+    ],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
@@ -13,25 +20,8 @@ let package = Package(
         ),
     ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "TransportServices",
-            dependencies: [
-                .target(name: "CIOUring", condition: .when(platforms: [.linux])),
-            ]
-        ),
-        .target(
-            name: "CIOUring",
-            dependencies: ["liburing"]
-        ),
-        .systemLibrary(
-            name: "liburing",
-            pkgConfig: "liburing",
-            providers: [
-                .apt(["liburing-dev"]),
-                .brew(["liburing"])
-            ]
+            name: "TransportServices"
         ),
         .testTarget(
             name: "TransportServicesTests",

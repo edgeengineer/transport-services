@@ -7,6 +7,11 @@
 
 import Foundation
 
+public enum BLEIdentifier: Sendable, Hashable {
+    case uuid(UUID)
+    case address(String)
+}
+
 public protocol Endpoint: Sendable {
     var hostName: String? { get set }
     var port: UInt16? { get set }
@@ -17,6 +22,10 @@ public protocol Endpoint: Sendable {
     var hopLimit: UInt8? { get set }
     var stunServer: (address: String, port: UInt16, credentials: Data)? { get set }
     var protocolIdentifier: String? { get set }
+
+    // BLE Properties
+    var bleIdentifier: BLEIdentifier? { get set }
+    var psm: UInt16? { get set }
 }
 
 public struct LocalEndpoint: Endpoint, Sendable {
@@ -29,6 +38,10 @@ public struct LocalEndpoint: Endpoint, Sendable {
     public var hopLimit: UInt8?
     public var stunServer: (address: String, port: UInt16, credentials: Data)?
     public var protocolIdentifier: String?
+
+    // BLE Properties
+    public var bleIdentifier: BLEIdentifier?
+    public var psm: UInt16?
     
     public init() {}
 }
@@ -43,6 +56,10 @@ public struct RemoteEndpoint: Endpoint, Sendable {
     public var hopLimit: UInt8?
     public var stunServer: (address: String, port: UInt16, credentials: Data)?
     public var protocolIdentifier: String?
+
+    // BLE Properties
+    public var bleIdentifier: BLEIdentifier?
+    public var psm: UInt16?
 
     public init() {}
 }

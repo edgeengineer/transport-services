@@ -7,6 +7,7 @@
 
 import Foundation
 
+@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 public protocol MessageFramer {
     func start(connection: Connection)
     func stop(connection: Connection)
