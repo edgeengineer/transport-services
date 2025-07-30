@@ -18,49 +18,89 @@ import Foundation
 import Network
 
 /// Apple platform connection implementation
-actor AppleConnection: @preconcurrency PlatformConnection {
+final class AppleConnection: PlatformConnection {
     private let preconnection: Preconnection
     private let eventHandler: @Sendable (TransportServicesEvent) -> Void
-    internal var nwConnection: NWConnection?
     private let queue = DispatchQueue(label: "apple.connection")
-    private var state: ConnectionState = .establishing
     
-    // Connection properties
-    private var connectionProperties: [String: Any] = [:]
+    // Thread-safe state management
+    private let stateContainer: StateContainer
     
-    // Group management
-    private weak var connectionGroup: AppleConnectionGroup?
-    
-    // Path monitoring
-    private var pathUpdateHandler: ((NWPath) -> Void)?
-    
-    // Owner connection reference for proper event handling
-    private weak var ownerConnection: Connection?
+    // Private class for thread-safe state management
+    private final class StateContainer: @unchecked Sendable {
+        private let queue = DispatchQueue(label: "apple.connection.state")
+        private var _nwConnection: NWConnection?
+        private var _state: ConnectionState = .establishing
+        private var _connectionProperties: [String: Any] = [:]
+        private weak var _connectionGroup: AppleConnectionGroup?
+        private var _pathUpdateHandler: ((NWPath) -> Void)?
+        private weak var _ownerConnection: Connection?
+        
+        var nwConnection: NWConnection? {
+            get { queue.sync { _nwConnection } }
+            set { queue.sync { _nwConnection = newValue } }
+        }
+        
+        var state: ConnectionState {
+            get { queue.sync { _state } }
+            set { queue.sync { _state = newValue } }
+        }
+        
+        var connectionGroup: AppleConnectionGroup? {
+            get { queue.sync { _connectionGroup } }
+            set { queue.sync { _connectionGroup = newValue } }
+        }
+        
+        var pathUpdateHandler: ((NWPath) -> Void)? {
+            get { queue.sync { _pathUpdateHandler } }
+            set { queue.sync { _pathUpdateHandler = newValue } }
+        }
+        
+        func getConnectionProperty(_ key: String) -> Any? {
+            queue.sync { _connectionProperties[key] }
+        }
+        
+        func setConnectionProperty(_ key: String, value: Any) {
+            queue.sync { _connectionProperties[key] = value }
+        }
+        
+        func getAllProperties() -> [String: Any] {
+            queue.sync { _connectionProperties }
+        }
+        
+        var ownerConnection: Connection? {
+            get { queue.sync { _ownerConnection } }
+            set { queue.sync { _ownerConnection = newValue } }
+        }
+    }
     
     init(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void, nwConnection: NWConnection? = nil) {
         self.preconnection = preconnection
         self.eventHandler = eventHandler
-        self.nwConnection = nwConnection
+        self.stateContainer = StateContainer()
+        
+        // Set initial connection if provided
+        if let nwConnection = nwConnection {
+            self.stateContainer.nwConnection = nwConnection
+        }
         
         // Initialize connection properties from preconnection
-        Task {
-            await initializeConnectionProperties()
-        }
+        initializeConnectionProperties()
     }
     
     func setOwnerConnection(_ connection: Connection?) async {
-        self.ownerConnection = connection
+        stateContainer.ownerConnection = connection
     }
     
     private func updateState(_ newState: ConnectionState) {
-        let oldState = self.state
-        self.state = newState
+        let oldState = stateContainer.state
+        stateContainer.state = newState
         
         // Handle state transitions according to RFC 9622 Section 11
         // Fire events through the owner connection if available
-        if let owner = ownerConnection {
-            // Update owner state asynchronously to avoid actor executor issues
-            Task.detached {
+        if let owner = stateContainer.ownerConnection {
+            // Update owner state asynchronously - no more actor executor issues!
+            Task {
                 await owner.updateState(newState)
             }
             
@@ -81,19 +121,19 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         let properties = preconnection.transportProperties
         
         // Connection priority (Section 8.1.2)
-        connectionProperties["connPriority"] = 100
+        stateContainer.setConnectionProperty("connPriority", value: 100)
         
         // Timeout properties (Section 8.1.3, 8.1.4)
-        connectionProperties["connTimeout"] = nil // Disabled by default
-        connectionProperties["keepAliveTimeout"] = nil // Disabled by default
+        stateContainer.setConnectionProperty("connTimeout", value: Optional<TimeInterval>.none as Any) // Disabled by default
+        stateContainer.setConnectionProperty("keepAliveTimeout", value: Optional<TimeInterval>.none as Any) // Disabled by default
         
         // Multipath policy (Section 8.1.7)
         if properties.multipath != .disabled {
-            connectionProperties["multipathPolicy"] = properties.multipathPolicy
+            stateContainer.setConnectionProperty("multipathPolicy", value: properties.multipathPolicy)
         }
         
         // Capacity profile (Section 8.1.6)
-        connectionProperties["connCapacityProfile"] = "default"
+        stateContainer.setConnectionProperty("connCapacityProfile", value: "default")
     }
     
     func initiate() async throws {
@@ -110,7 +150,7 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         
         // Create connection
         let connection = NWConnection(to: endpoint, using: params)
-        self.nwConnection = connection
+        stateContainer.nwConnection = connection
         
         // Set up handlers
         setupConnectionHandlers(connection)
@@ -121,25 +161,23 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         // Set up state handler and wait for connection
         let connectionReady = AsyncStream<Result<Void, Error>> { continuation in
             connection.stateUpdateHandler = { [weak self] state in
-                Task {
-                    switch state {
-                    case .ready:
-                        await self?.updateState(.established)
-                        continuation.yield(.success(()))
-                        continuation.finish()
-                        
-                    case .failed(let error):
-                        await self?.updateState(.closed)
-                        continuation.yield(.failure(error))
-                        continuation.finish()
-                        
-                    case .waiting(let error):
-                        // Handle waiting state (e.g., network not available)
-                        await self?.handleWaitingState(error)
-                        
-                    default:
-                        break
-                    }
+                switch state {
+                case .ready:
+                    self?.updateState(.established)
+                    continuation.yield(.success(()))
+                    continuation.finish()
+                    
+                case .failed(let error):
+                    self?.updateState(.closed)
+                    continuation.yield(.failure(error))
+                    continuation.finish()
+                    
+                case .waiting(let error):
+                    // Handle waiting state (e.g., network not available)
+                    self?.handleWaitingState(error)
+                    
+                default:
+                    break
                 }
             }
             
@@ -173,43 +211,37 @@ actor AppleConnection: @preconcurrency PlatformConnection {
     private func setupConnectionHandlers(_ connection: NWConnection) {
         // Path update handler for multipath support
         connection.pathUpdateHandler = { [weak self] path in
-            Task {
-                await self?.handlePathUpdate(path)
-            }
+            self?.handlePathUpdate(path)
         }
         
         // Better path update handler
         connection.betterPathUpdateHandler = { [weak self] available in
-            Task {
-                await self?.handleBetterPathAvailable(available)
-            }
+            self?.handleBetterPathAvailable(available)
         }
         
         // Viability change handler
         connection.viabilityUpdateHandler = { [weak self] viable in
-            Task {
-                await self?.handleViabilityChange(viable)
-            }
+            self?.handleViabilityChange(viable)
         }
     }
     
     private func handleWaitingState(_ error: NWError) {
         // Notify application about soft errors
-        if let owner = ownerConnection {
+        if let owner = stateContainer.ownerConnection {
             eventHandler(.softError(owner, reason: error.localizedDescription))
         }
     }
     
     private func handlePathUpdate(_ path: NWPath) {
         // Notify about path changes (RFC 9622 Section 8.3.2)
-        if let owner = ownerConnection {
+        if let owner = stateContainer.ownerConnection {
             eventHandler(.pathChange(owner))
         }
-        pathUpdateHandler?(path)
+        stateContainer.pathUpdateHandler?(path)
     }
     
     private func handleBetterPathAvailable(_ available: Bool) {
-        if available && connectionProperties["multipathPolicy"] as? MultipathPolicy == .handover {
+        if available && stateContainer.getConnectionProperty("multipathPolicy") as? MultipathPolicy == .handover {
             // Consider migrating to better path
             // Note: path change events should include Connection reference
         }
@@ -223,11 +255,11 @@ actor AppleConnection: @preconcurrency PlatformConnection {
     }
     
     func send(data: Data, context: MessageContext, endOfMessage: Bool) async throws {
-        guard let connection = nwConnection else {
+        guard let connection = stateContainer.nwConnection else {
             throw TransportError.notConnected
         }
         
-        guard state == .established else {
+        guard stateContainer.state == .established else {
             throw TransportError.notConnected
         }
         
@@ -251,19 +283,17 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         
         // Send with appropriate completion handling
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.send(content: data, contentContext: content, isComplete: endOfMessage, completion: .contentProcessed { error in
-                Task { [weak self] in
-                    if let error = error {
-                        if let owner = await self?.ownerConnection {
-                            await self?.eventHandler(.sendError(owner, context, reason: error.localizedDescription))
-                        }
-                        continuation.resume(throwing: error)
-                    } else {
-                        if let owner = await self?.ownerConnection {
-                            await self?.eventHandler(.sent(owner, context))
-                        }
-                        continuation.resume()
+            connection.send(content: data, contentContext: content, isComplete: endOfMessage, completion: .contentProcessed { [weak self] error in
+                if let error = error {
+                    if let owner = self?.stateContainer.ownerConnection {
+                        self?.eventHandler(.sendError(owner, context, reason: error.localizedDescription))
                     }
+                    continuation.resume(throwing: error)
+                } else {
+                    if let owner = self?.stateContainer.ownerConnection {
+                        self?.eventHandler(.sent(owner, context))
+                    }
+                    continuation.resume()
                 }
             })
         }
@@ -293,19 +323,19 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         }
         
         // Check if final message was already sent
-        if connectionProperties["finalMessageSent"] as? Bool == true {
+        if stateContainer.getConnectionProperty("finalMessageSent") as? Bool == true {
             return false
         }
         
-        return state == .established
+        return stateContainer.state == .established
     }
     
     func receive(minIncompleteLength: Int?, maxLength: Int?) async throws -> (Data, MessageContext, Bool) {
-        guard let connection = nwConnection else {
+        guard let connection = stateContainer.nwConnection else {
             throw TransportError.notConnected
         }
         
-        guard state == .established else {
+        guard stateContainer.state == .established else {
             throw TransportError.notConnected
         }
         
@@ -318,42 +348,40 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         let maxLength = maxLength ?? 65536
         
         return try await withCheckedThrowingContinuation { continuation in
-            connection.receive(minimumIncompleteLength: minLength, maximumLength: maxLength) { data, contentContext, isComplete, error in
-                Task { [weak self] in
-                    if let error = error {
-                        if let owner = await self?.ownerConnection {
-                            let context = MessageContext()
-                            await self?.eventHandler(.receiveError(owner, context, reason: error.localizedDescription))
-                        }
-                        continuation.resume(throwing: error)
-                    } else if let data = data {
-                        let messageContext = await self?.createMessageContextFromReceive(contentContext: contentContext) ?? MessageContext()
-                        
-                        // Check if this is a final message
-                        if contentContext?.isFinal == true {
-                            // Mark in our connection properties
-                            await self?.setConnectionProperty("finalMessageReceived", value: true)
-                        }
-                        
-                        // Fire appropriate receive event
-                        if let owner = await self?.ownerConnection {
-                            if isComplete {
-                                await self?.eventHandler(.received(owner, data, messageContext))
-                            } else {
-                                await self?.eventHandler(.receivedPartial(owner, data, messageContext, endOfMessage: isComplete))
-                            }
-                        }
-                        
-                        continuation.resume(returning: (data, messageContext, isComplete))
-                    } else {
-                        continuation.resume(throwing: TransportError.connectionClosed)
+            connection.receive(minimumIncompleteLength: minLength, maximumLength: maxLength) { [weak self] data, contentContext, isComplete, error in
+                if let error = error {
+                    if let owner = self?.stateContainer.ownerConnection {
+                        let context = MessageContext()
+                        self?.eventHandler(.receiveError(owner, context, reason: error.localizedDescription))
                     }
+                    continuation.resume(throwing: error)
+                } else if let data = data {
+                    let messageContext = self?.createMessageContextFromReceive(contentContext: contentContext) ?? MessageContext()
+                    
+                    // Check if this is a final message
+                    if contentContext?.isFinal == true {
+                        // Mark in our connection properties
+                        self?.stateContainer.setConnectionProperty("finalMessageReceived", value: true)
+                    }
+                    
+                    // Fire appropriate receive event
+                    if let owner = self?.stateContainer.ownerConnection {
+                        if isComplete {
+                            self?.eventHandler(.received(owner, data, messageContext))
+                        } else {
+                            self?.eventHandler(.receivedPartial(owner, data, messageContext, endOfMessage: isComplete))
+                        }
+                    }
+                    
+                    continuation.resume(returning: (data, messageContext, isComplete))
+                } else {
+                    continuation.resume(throwing: TransportError.connectionClosed)
                 }
             }
         }
     }
     
-    private func createMessageContextFromReceive(contentContext: NWConnection.ContentContext?) async -> MessageContext {
+    private func createMessageContextFromReceive(contentContext: NWConnection.ContentContext?) -> MessageContext {
         let messageContext = MessageContext()
         
         if let contentContext = contentContext {
@@ -388,11 +416,11 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         }
         
         // Check if final message was already received
-        if connectionProperties["finalMessageReceived"] as? Bool == true {
+        if stateContainer.getConnectionProperty("finalMessageReceived") as? Bool == true {
             return false
         }
         
-        return state == .established
+        return stateContainer.state == .established
     }
     
     private func extractRemoteEndpoint(from connection: NWConnection) -> RemoteEndpoint? {
@@ -406,7 +434,7 @@ actor AppleConnection: @preconcurrency PlatformConnection {
     }
     
     func close() async {
-        guard let connection = nwConnection else { return }
+        guard let connection = stateContainer.nwConnection else { return }
         
         // Graceful close - wait for outstanding data to be sent
         updateState(.closing)
@@ -418,32 +446,34 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             connection.stateUpdateHandler = { [weak self] state in
                 if case .cancelled = state {
-                    Task {
-                        await self?.updateState(.closed)
-                        // Note: closed event needs Connection reference
-                        continuation.resume()
-                    }
+                    self?.updateState(.closed)
+                    // Note: closed event needs Connection reference
+                    continuation.resume()
                 }
             }
         }
     }
     
     func abort() {
-        guard let connection = nwConnection else { return }
+        guard let connection = stateContainer.nwConnection else { return }
         
         // Immediate termination without waiting for outstanding data
         connection.forceCancel()
-        updateState(.closed)
+        
+        // Set state directly to closed for abort (immediate)
+        stateContainer.state = .closed
         
         // Send connection error event
-        if let owner = ownerConnection {
+        if let owner = stateContainer.ownerConnection {
             eventHandler(.connectionError(owner, reason: "Connection aborted"))
+            // Also send closed event for abort
+            eventHandler(.closed(owner))
         }
     }
     
     // Support for Connection Groups (Section 7.4)
     func clone(framer: MessageFramer?, connectionProperties: TransportProperties?) async throws -> any PlatformConnection {
-        guard nwConnection != nil else {
+        guard stateContainer.nwConnection != nil else {
             throw TransportError.notConnected
         }
         
@@ -461,13 +491,13 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         )
         
         // Set up connection group relationship
-        if let group = self.connectionGroup {
-            await clonedConnection.setConnectionGroup(group)
+        if let group = stateContainer.connectionGroup {
+            clonedConnection.setConnectionGroup(group)
         } else {
             // Create new connection group
             let group = AppleConnectionGroup()
-            await self.setConnectionGroup(group)
-            await clonedConnection.setConnectionGroup(group)
+            self.setConnectionGroup(group)
+            clonedConnection.setConnectionGroup(group)
         }
         
         // Initiate the cloned connection
@@ -477,7 +507,7 @@ actor AppleConnection: @preconcurrency PlatformConnection {
     }
     
     func setConnectionGroup(_ group: AppleConnectionGroup) {
-        self.connectionGroup = group
+        stateContainer.connectionGroup = group
         group.addConnection(self)
     }
     
@@ -494,7 +524,7 @@ actor AppleConnection: @preconcurrency PlatformConnection {
     }
     
     func getState() -> ConnectionState {
-        return state
+        return stateContainer.state
     }
     
     func setProperty(_ property: ConnectionProperty, value: Any) async throws {
@@ -509,24 +539,24 @@ actor AppleConnection: @preconcurrency PlatformConnection {
     }
     
     private func setConnectionProperty(_ key: String, value: Any) {
-        connectionProperties[key] = value
+        stateContainer.setConnectionProperty(key, value: value)
         
         // Apply property changes if possible
         switch key {
         case "connPriority":
             // Connection priority affects scheduling within a group
             if let priority = value as? Int {
-                connectionProperties["connPriority"] = priority
+                stateContainer.setConnectionProperty("connPriority", value: priority)
             }
             
         case "connTimeout":
             // Store for monitoring connection health
-            connectionProperties["connTimeout"] = value
+            stateContainer.setConnectionProperty("connTimeout", value: value)
             
         case "keepAliveTimeout":
             // Configure keep-alive if supported
             if let timeout = value as? TimeInterval,
-               let connection = nwConnection,
+               let connection = stateContainer.nwConnection,
                let tcpOptions = connection.parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
                 tcpOptions.enableKeepalive = true
                 tcpOptions.keepaliveInterval = Int(timeout)
@@ -535,7 +565,7 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         case "connCapacityProfile":
             // Map to service class
             if let profile = value as? String,
-               let connection = nwConnection {
+               let connection = stateContainer.nwConnection {
                 updateServiceClass(for: connection, profile: profile)
             }
             
@@ -548,7 +578,7 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         // Handle read-only properties
         switch key {
         case "connState":
-            return state
+            return stateContainer.state
             
         case "canSend":
             return canSend()
@@ -566,7 +596,7 @@ actor AppleConnection: @preconcurrency PlatformConnection {
             return 65536 // Default max for most protocols
             
         default:
-            return connectionProperties[key]
+            return stateContainer.getConnectionProperty(key)
         }
     }
     
@@ -588,7 +618,7 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         
         // Note: Service class cannot be changed after connection creation
         // Store for future connections
-        connectionProperties["serviceClass"] = serviceClass
+        stateContainer.setConnectionProperty("serviceClass", value: serviceClass)
     }
     
     // MARK: - Private Methods

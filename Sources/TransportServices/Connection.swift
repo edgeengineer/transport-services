@@ -52,9 +52,9 @@ public actor Connection {
     
     /// Abort the connection immediately
     public func abort() {
-        state = .closing
+        state = .closed  // Abort should immediately close
         platformConnection.abort()
-        // Platform connection will handle state update and event
+        // Platform connection will handle events
     }
     
     /// Clone this connection to create a new connection with same properties
@@ -112,6 +112,8 @@ public actor Connection {
     /// Receive data from the connection
     public func receive(minIncompleteLength: Int? = nil, maxLength: Int? = nil) async throws -> (Data, MessageContext) {
         guard state == .established else {
+            let context = MessageContext()
+            eventHandler(.receiveError(self, context, reason: "Connection not established"))
             throw TransportServicesError.connectionClosed
         }
         
