@@ -5,7 +5,14 @@
 //  Maximilian Alexander
 //
 
+
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
 import Foundation
+#endif
+#endif
 
 public enum BLEIdentifier: Sendable, Hashable {
     case uuid(UUID)
@@ -44,6 +51,21 @@ public struct LocalEndpoint: Endpoint, Sendable {
     public var psm: UInt16?
     
     public init() {}
+    
+    // Convenience initializers
+    public static func tcp(port: UInt16, interface: String? = nil) -> LocalEndpoint {
+        var endpoint = LocalEndpoint()
+        endpoint.port = port
+        endpoint.interface = interface
+        return endpoint
+    }
+    
+    public static func udp(port: UInt16, interface: String? = nil) -> LocalEndpoint {
+        var endpoint = LocalEndpoint()
+        endpoint.port = port
+        endpoint.interface = interface
+        return endpoint
+    }
 }
 
 public struct RemoteEndpoint: Endpoint, Sendable {
@@ -62,4 +84,26 @@ public struct RemoteEndpoint: Endpoint, Sendable {
     public var psm: UInt16?
 
     public init() {}
+    
+    // Convenience initializers
+    public static func tcp(host: String, port: UInt16) -> RemoteEndpoint {
+        var endpoint = RemoteEndpoint()
+        endpoint.hostName = host
+        endpoint.port = port
+        return endpoint
+    }
+    
+    public static func udp(host: String, port: UInt16) -> RemoteEndpoint {
+        var endpoint = RemoteEndpoint()
+        endpoint.hostName = host
+        endpoint.port = port
+        return endpoint
+    }
+    
+    public static func tcp(ip: String, port: UInt16) -> RemoteEndpoint {
+        var endpoint = RemoteEndpoint()
+        endpoint.ipAddress = ip
+        endpoint.port = port
+        return endpoint
+    }
 }

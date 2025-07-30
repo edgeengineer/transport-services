@@ -5,7 +5,14 @@
 //  Maximilian Alexander
 //
 
+
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
 import Foundation
+#endif
+#endif
 
 public struct TransportProperties: Sendable {
     // Selection Properties (RFC 9622 Section 6.2)

@@ -5,8 +5,13 @@
 //  Maximilian Alexander
 //
 
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
 import Foundation
-
+#endif
+#endif
 // From RFC 9622 Section 6.2
 public enum Preference: Sendable {
     case require

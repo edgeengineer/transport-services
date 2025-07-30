@@ -2,15 +2,22 @@
 //  AppleConnection.swift
 //  
 //
-//  Created by Cline on 7/30/25.
+//  Maximilian Alexander
 //
 
+
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
 import Foundation
+#endif
+#endif
+
 #if canImport(Network)
 import Network
 
 /// Apple platform connection implementation
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 actor AppleConnection: @preconcurrency PlatformConnection {
     private let preconnection: Preconnection
     private let eventHandler: @Sendable (TransportServicesEvent) -> Void
@@ -127,7 +134,7 @@ actor AppleConnection: @preconcurrency PlatformConnection {
         state = .closed
     }
     
-    func abort() async {
+    func abort() {
         nwConnection?.forceCancel()
         state = .closed
     }
@@ -137,12 +144,38 @@ actor AppleConnection: @preconcurrency PlatformConnection {
     }
     
     nonisolated func setProperty(_ property: ConnectionProperty, value: Any) async throws {
-        // Implement property setting based on NWConnection capabilities
+        // Note: Most NWConnection properties can't be modified after creation
+        // These would need to be stored and applied when creating new connections
+        switch property {
+        case .keepAlive(_, _):
+            // Store for future use, can't modify existing connection
+            break
+        case .noDelay(_):
+            // Store for future use, can't modify existing connection
+            break
+        case .connectionTimeout(_):
+            // Store for future use, can't modify existing connection
+            break
+        case .retransmissionTimeout(_):
+            // Not directly supported by Network.framework
+            break
+        case .multipathPolicy(_):
+            // Store for future use, can't modify existing connection
+            break
+        case .priority(_):
+            // Could potentially use NWConnection.betterPathUpdateHandler
+            break
+        case .trafficClass(_):
+            // Could map to service class
+            break
+        case .receiveBufferSize(_), .sendBufferSize(_):
+            // Not directly configurable in Network.framework
+            break
+        }
     }
     
     nonisolated func getProperty(_ property: ConnectionProperty) async -> Any? {
-        // Implement property getting based on NWConnection capabilities
-        return nil
+        return nil // Properties are not directly retrievable from NWConnection
     }
     
     // MARK: - Private Methods
@@ -184,6 +217,27 @@ actor AppleConnection: @preconcurrency PlatformConnection {
             return NWEndpoint.hostPort(host: host, port: port)
         } else {
             throw TransportError.invalidEndpoint
+        }
+    }
+    
+    private func convertNWEndpointToSocketAddress(_ endpoint: NWEndpoint) -> SocketAddress? {
+        switch endpoint {
+        case let .hostPort(host, port):
+            let portNumber = port.rawValue
+            switch host {
+            case let .ipv4(address):
+                return .ipv4(address: "\(address)", port: portNumber)
+            case let .ipv6(address):
+                return .ipv6(address: "\(address)", port: portNumber, scopeId: 0)
+            case .name(_, _):
+                // For hostnames, we can't convert directly to SocketAddress
+                // This would need resolution
+                return nil
+            @unknown default:
+                return nil
+            }
+        default:
+            return nil
         }
     }
 }

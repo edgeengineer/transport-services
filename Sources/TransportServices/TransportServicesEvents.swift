@@ -2,12 +2,18 @@
 //  TapsEvents.swift
 //  
 //
-//  Created by Cline on 7/30/25.
+//  Maximilian Alexander
 //
 
-import Foundation
 
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
+import Foundation
+#endif
+#endif
+
 public enum TransportServicesEvent: Sendable {
     case ready(Connection)
     case connectionReceived(Listener, Connection)

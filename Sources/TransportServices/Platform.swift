@@ -2,13 +2,19 @@
 //  Platform.swift
 //  
 //
-//  Created by Cline on 7/30/25.
+//  Maximilian Alexander
 //
 
+
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
 import Foundation
+#endif
+#endif
 
 /// Platform-specific implementation of the Transport Services API
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 public protocol Platform: Sendable {
     /// Create a connection object for this platform
     func createConnection(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any PlatformConnection
@@ -27,7 +33,6 @@ public protocol Platform: Sendable {
 }
 
 /// Platform-specific connection implementation
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 public protocol PlatformConnection: Sendable {
     /// Initiate the connection
     func initiate() async throws
@@ -42,7 +47,7 @@ public protocol PlatformConnection: Sendable {
     func close() async
     
     /// Abort the connection immediately
-    func abort() async
+    func abort()
     
     /// Get connection state
     func getState() -> ConnectionState
@@ -55,7 +60,6 @@ public protocol PlatformConnection: Sendable {
 }
 
 /// Platform-specific listener implementation
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 public protocol PlatformListener: Sendable {
     /// Start listening for incoming connections
     func listen() async throws

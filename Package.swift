@@ -18,10 +18,30 @@ let package = Package(
             name: "TransportServices",
             targets: ["TransportServices"]
         ),
+        .executable(
+            name: "SimpleServer",
+            targets: ["SimpleServer"]
+        ),
+        .executable(
+            name: "SimpleClient",
+            targets: ["SimpleClient"]
+        ),
     ],
     targets: [
         .target(
             name: "TransportServices"
+        ),
+        .executableTarget(
+            name: "SimpleServer",
+            dependencies: ["TransportServices"],
+            path: "Examples",
+            sources: ["SimpleServer.swift"]
+        ),
+        .executableTarget(
+            name: "SimpleClient",
+            dependencies: ["TransportServices"],
+            path: "Examples",
+            sources: ["SimpleClient.swift"]
         ),
         .testTarget(
             name: "TransportServicesTests",

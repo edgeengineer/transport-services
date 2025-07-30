@@ -2,13 +2,18 @@
 //  Listener.swift
 //  
 //
-//  Created by Cline on 7/30/25.
+//  Maximilian Alexander
 //
 
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
 import Foundation
+#endif
+#endif
 
 /// Represents a passive endpoint that listens for incoming connections
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 public actor Listener {
     public let preconnection: Preconnection
     public nonisolated let eventHandler: @Sendable (TransportServicesEvent) -> Void
@@ -117,7 +122,6 @@ public actor Listener {
 }
 
 /// Extension for multicast support
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 extension Listener {
     /// Join a multicast group (for multicast listeners)
     public func joinMulticastGroup(_ group: String, interface: String? = nil) async throws {

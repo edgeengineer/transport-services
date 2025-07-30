@@ -2,10 +2,17 @@
 //  EventLoop.swift
 //  
 //
-//  Created by Cline on 7/30/25.
+//  Maximilian Alexander
 //
 
+
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
 import Foundation
+#endif
+#endif
 
 #if canImport(Dispatch)
 import Dispatch

@@ -2,14 +2,21 @@
 //  LinuxPlatform.swift
 //  
 //
-//  Created by Cline on 7/30/25.
+//  Maximilian Alexander
 //
 
+
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
 import Foundation
+#endif
+#endif
+
 #if os(Linux)
 
 /// Linux platform implementation using io_uring
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 public final class LinuxPlatform: Platform {
     
     public init() {}

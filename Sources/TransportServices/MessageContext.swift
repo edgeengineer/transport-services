@@ -5,7 +5,14 @@
 //  Maximilian Alexander
 //
 
+
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
 import Foundation
+#endif
+#endif
 
 public struct MessageContext: Sendable {
     // Message Properties (RFC 9622 Section 9.1.3)

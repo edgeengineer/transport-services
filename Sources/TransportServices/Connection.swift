@@ -5,18 +5,24 @@
 //  Maximilian Alexander
 //
 
+
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
 import Foundation
+#endif
+#endif
 
 /// Represents an established or establishing transport connection
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 public actor Connection {
     public let preconnection: Preconnection
     public nonisolated let eventHandler: @Sendable (TransportServicesEvent) -> Void
     private let platformConnection: any PlatformConnection
     private let platform: Platform
-    private var state: ConnectionState = .establishing
+    public private(set) var state: ConnectionState = .establishing
     private var connectionGroup: ConnectionGroup?
-    private var properties: TransportProperties
+    private var _properties: TransportProperties
     
     /// Initialize a new connection
     init(preconnection: Preconnection, 
@@ -27,15 +33,25 @@ public actor Connection {
         self.eventHandler = eventHandler
         self.platformConnection = platformConnection
         self.platform = platform
-        self.properties = preconnection.transportProperties
+        self._properties = preconnection.transportProperties
+    }
+    
+    /// Update connection state (internal use)
+    func updateState(_ newState: ConnectionState) {
+        self.state = newState
+    }
+    
+    /// Check if the connection is established
+    public var isEstablished: Bool {
+        state == .established
+    }
+    
+    /// Check if the connection is closed
+    public var isClosed: Bool {
+        state == .closed
     }
     
     // MARK: - Connection Lifecycle
-    
-    /// Get the current connection state
-    public func getState() -> ConnectionState {
-        return platformConnection.getState()
-    }
     
     /// Close the connection gracefully
     public func close() async {
@@ -46,9 +62,9 @@ public actor Connection {
     }
     
     /// Abort the connection immediately
-    public func abort() async {
+    public func abort() {
         state = .closing
-        await platformConnection.abort()
+        platformConnection.abort()
         state = .closed
         eventHandler(.connectionError(self, reason: "Connection aborted"))
     }
@@ -71,7 +87,7 @@ public actor Connection {
         // Copy connection group membership
         if let group = connectionGroup {
             await group.addConnection(newConnection)
-            await newConnection.setConnectionGroup(group)
+            await newConnection.setGroup(group)
         }
         
         // Initiate the cloned connection
@@ -90,7 +106,7 @@ public actor Connection {
     
     /// Send data over the connection
     public func send(data: Data, context: MessageContext = MessageContext(), endOfMessage: Bool = true) async throws {
-        guard state == .established else {
+        guard isEstablished else {
             throw TransportServicesError.connectionClosed
         }
         
@@ -105,7 +121,7 @@ public actor Connection {
     
     /// Receive data from the connection
     public func receive(minIncompleteLength: Int? = nil, maxLength: Int? = nil) async throws -> (Data, MessageContext) {
-        guard state == .established else {
+        guard isEstablished else {
             throw TransportServicesError.connectionClosed
         }
         
@@ -130,10 +146,9 @@ public actor Connection {
     }
     
     /// Start receiving data continuously
-    @available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
     public func startReceiving(minIncompleteLength: Int? = nil, maxLength: Int? = nil) {
         Task {
-            while state == .established {
+            while isEstablished {
                 do {
                     let _ = try await receive(
                         minIncompleteLength: minIncompleteLength,
@@ -149,26 +164,31 @@ public actor Connection {
     
     // MARK: - Properties
     
-    /// Get current transport properties
-    public func getProperties() -> TransportProperties {
-        return properties
+    /// Transport properties for this connection
+    public var properties: TransportProperties {
+        get { _properties }
+        set {
+            _properties = newValue
+            // Note: Setting bulk properties would require recreating the connection
+            // as most transport properties can't be changed after establishment
+        }
     }
     
-    /// Set a connection property
+    /// Set a specific connection property
     public func setConnectionProperty(_ property: ConnectionProperty) async throws {
         try await platformConnection.setProperty(property, value: property)
         
         // Update local properties based on the property type
         switch property {
         case .multipathPolicy(let policy):
-            properties.multipathPolicy = policy
+            _properties.multipathPolicy = policy
         case .priority(let priority):
-            properties.connPriority = UInt(priority)
+            _properties.connPriority = UInt(priority)
         case .connectionTimeout(let timeout):
-            properties.connTimeout = timeout
+            _properties.connTimeout = timeout
         case .keepAlive(let enabled, let interval):
-            properties.keepAlive = enabled ? .require : .prohibit
-            properties.keepAliveTimeout = interval
+            _properties.keepAlive = enabled ? .require : .prohibit
+            _properties.keepAliveTimeout = interval
         default:
             break
         }
@@ -216,19 +236,18 @@ public actor Connection {
     
     // MARK: - Connection Groups
     
-    /// Set the connection group for this connection
-    func setConnectionGroup(_ group: ConnectionGroup) async {
-        self.connectionGroup = group
+    /// The connection group this connection belongs to
+    public var group: ConnectionGroup? {
+        connectionGroup
     }
     
-    /// Get the connection group for this connection
-    public func getConnectionGroup() -> ConnectionGroup? {
-        return connectionGroup
+    /// Set the connection group
+    public func setGroup(_ group: ConnectionGroup?) {
+        connectionGroup = group
     }
 }
 
 /// Represents a group of related connections
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 public actor ConnectionGroup {
     private var connections: Set<ObjectIdentifier> = []
     private weak var scheduler: ConnectionGroupScheduler?
@@ -247,9 +266,9 @@ public actor ConnectionGroup {
         connections.remove(ObjectIdentifier(connection))
     }
     
-    /// Get the number of connections in the group
-    public func connectionCount() -> Int {
-        return connections.count
+    /// The number of connections in the group
+    public var connectionCount: Int {
+        connections.count
     }
     
     /// Close all connections in the group
@@ -264,7 +283,6 @@ public actor ConnectionGroup {
 }
 
 /// Connection group scheduler for managing multiple connections
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 public protocol ConnectionGroupScheduler: AnyObject {
     func schedule(data: Data, context: MessageContext, group: ConnectionGroup) async -> Connection?
 }

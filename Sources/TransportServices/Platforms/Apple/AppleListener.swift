@@ -2,7 +2,7 @@
 //  AppleListener.swift
 //  
 //
-//  Created by Cline on 7/30/25.
+//  Maximilian Alexander
 //
 
 import Foundation
@@ -10,7 +10,6 @@ import Foundation
 import Network
 
 /// Apple platform listener implementation
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 actor AppleListener: @preconcurrency PlatformListener {
     private let preconnection: Preconnection
     private let eventHandler: @Sendable (TransportServicesEvent) -> Void

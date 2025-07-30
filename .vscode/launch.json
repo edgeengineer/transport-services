@@ -1,0 +1,40 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:taps-swift}",
+            "name": "Debug SimpleServer",
+            "program": "${workspaceFolder:taps-swift}/.build/debug/SimpleServer",
+            "preLaunchTask": "swift: Build Debug SimpleServer"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:taps-swift}",
+            "name": "Release SimpleServer",
+            "program": "${workspaceFolder:taps-swift}/.build/release/SimpleServer",
+            "preLaunchTask": "swift: Build Release SimpleServer"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:taps-swift}",
+            "name": "Debug SimpleClient",
+            "program": "${workspaceFolder:taps-swift}/.build/debug/SimpleClient",
+            "preLaunchTask": "swift: Build Debug SimpleClient"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:taps-swift}",
+            "name": "Release SimpleClient",
+            "program": "${workspaceFolder:taps-swift}/.build/release/SimpleClient",
+            "preLaunchTask": "swift: Build Release SimpleClient"
+        }
+    ]
+}

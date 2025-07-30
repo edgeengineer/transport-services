@@ -2,14 +2,21 @@
 //  WindowsPlatform.swift
 //  
 //
-//  Created by Cline on 7/30/25.
+//  Maximilian Alexander
 //
 
+
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
 import Foundation
+#endif
+#endif
+
 #if os(Windows)
 
 /// Windows platform implementation using IOCP
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 public final class WindowsPlatform: Platform {
     
     public init() {}

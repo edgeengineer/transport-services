@@ -2,13 +2,19 @@
 //  Taps.swift
 //  
 //
-//  Created by Cline on 7/30/25.
+//  Maximilian Alexander
 //
 
+
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
 import Foundation
+#endif
+#endif
 
 /// Transport Services API main entry point
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 public actor TransportServices {
     private let platform: Platform
     
@@ -46,7 +52,6 @@ public actor TransportServices {
     }
     
     /// Initiate a connection to a remote endpoint
-    @available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
     public func initiate(
         preconnection: Preconnection,
         timeout: TimeInterval? = nil,
@@ -81,7 +86,6 @@ public actor TransportServices {
     }
     
     /// Initiate a connection with initial data
-    @available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
     public func initiateWithSend(
         preconnection: Preconnection,
         messageData: Data,
@@ -107,7 +111,6 @@ public actor TransportServices {
     }
     
     /// Listen for incoming connections
-    @available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
     public func listen(
         preconnection: Preconnection,
         eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void
@@ -143,7 +146,6 @@ public actor TransportServices {
     }
     
     /// Establish a peer-to-peer connection using rendezvous
-    @available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
     public func rendezvous(
         preconnection: Preconnection,
         eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void
@@ -188,7 +190,6 @@ public actor TransportServices {
 
 // MARK: - Helper Functions
 
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 private func withTimeout<T>(_ timeout: TimeInterval?, operation: @escaping @Sendable () async throws -> T) async throws -> T where T: Sendable {
     if let timeout = timeout {
         return try await withThrowingTaskGroup(of: T.self) { group in

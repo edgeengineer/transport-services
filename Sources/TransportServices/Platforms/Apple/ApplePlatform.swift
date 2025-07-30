@@ -2,15 +2,22 @@
 //  ApplePlatform.swift
 //  
 //
-//  Created by Cline on 7/30/25.
+//  Maximilian Alexander
 //
 
+
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
 import Foundation
+#endif
+#endif
+
 #if canImport(Network)
 import Network
 
 /// Apple platform implementation using Network.framework
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 public final class ApplePlatform: Platform {
     
     public init() {}
@@ -218,9 +225,23 @@ public final class ApplePlatform: Platform {
     }
     
     private func getInterfaceAddresses(interface: NWInterface) -> [SocketAddress] {
-        // This would need platform-specific implementation to get actual addresses
-        // For now, return empty array
-        return []
+        // Network.framework doesn't directly expose interface addresses
+        // We would need to use lower-level APIs like getifaddrs() for full implementation
+        // For now, return common addresses based on interface type
+        var addresses: [SocketAddress] = []
+        
+        switch interface.type {
+        case .loopback:
+            // Loopback typically has 127.0.0.1 and ::1
+            addresses.append(.ipv4(address: "127.0.0.1", port: 0))
+            addresses.append(.ipv6(address: "::1", port: 0, scopeId: 0))
+        default:
+            // For other interfaces, we can't determine addresses without lower-level APIs
+            // This would require importing Darwin and using getifaddrs
+            break
+        }
+        
+        return addresses
     }
 }
 
