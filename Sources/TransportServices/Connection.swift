@@ -41,16 +41,6 @@ public actor Connection {
         self.state = newState
     }
     
-    /// Check if the connection is established
-    public var isEstablished: Bool {
-        state == .established
-    }
-    
-    /// Check if the connection is closed
-    public var isClosed: Bool {
-        state == .closed
-    }
-    
     // MARK: - Connection Lifecycle
     
     /// Close the connection gracefully
@@ -106,7 +96,7 @@ public actor Connection {
     
     /// Send data over the connection
     public func send(data: Data, context: MessageContext = MessageContext(), endOfMessage: Bool = true) async throws {
-        guard isEstablished else {
+        guard state == .established else {
             throw TransportServicesError.connectionClosed
         }
         
@@ -121,7 +111,7 @@ public actor Connection {
     
     /// Receive data from the connection
     public func receive(minIncompleteLength: Int? = nil, maxLength: Int? = nil) async throws -> (Data, MessageContext) {
-        guard isEstablished else {
+        guard state == .established else {
             throw TransportServicesError.connectionClosed
         }
         
@@ -148,7 +138,7 @@ public actor Connection {
     /// Start receiving data continuously
     public func startReceiving(minIncompleteLength: Int? = nil, maxLength: Int? = nil) {
         Task {
-            while isEstablished {
+            while state == .established {
                 do {
                     let _ = try await receive(
                         minIncompleteLength: minIncompleteLength,
@@ -164,14 +154,10 @@ public actor Connection {
     
     // MARK: - Properties
     
-    /// Transport properties for this connection
+    /// Transport properties for this connection (read-only)
+    /// To modify properties, use setConnectionProperty
     public var properties: TransportProperties {
-        get { _properties }
-        set {
-            _properties = newValue
-            // Note: Setting bulk properties would require recreating the connection
-            // as most transport properties can't be changed after establishment
-        }
+        _properties
     }
     
     /// Set a specific connection property
@@ -202,7 +188,7 @@ public actor Connection {
     // MARK: - Endpoint Management
     
     /// Add remote endpoints for multipath or migration
-    public func addRemote(_ remoteEndpoints: [RemoteEndpoint]) async {
+    public func addRemote(_ remoteEndpoints: [RemoteEndpoint]) {
         // This would be implemented by the platform to add new paths
         // For now, just update the preconnection copy
         var updatedPreconnection = preconnection
@@ -210,7 +196,7 @@ public actor Connection {
     }
     
     /// Remove remote endpoints
-    public func removeRemote(_ remoteEndpoints: [RemoteEndpoint]) async {
+    public func removeRemote(_ remoteEndpoints: [RemoteEndpoint]) {
         // This would be implemented by the platform to remove paths
         var updatedPreconnection = preconnection
         updatedPreconnection.remoteEndpoints.removeAll { endpoint in
@@ -219,14 +205,14 @@ public actor Connection {
     }
     
     /// Add local endpoints for multipath or migration
-    public func addLocal(_ localEndpoints: [LocalEndpoint]) async {
+    public func addLocal(_ localEndpoints: [LocalEndpoint]) {
         // This would be implemented by the platform to add new local paths
         var updatedPreconnection = preconnection
         updatedPreconnection.localEndpoints.append(contentsOf: localEndpoints)
     }
     
     /// Remove local endpoints
-    public func removeLocal(_ localEndpoints: [LocalEndpoint]) async {
+    public func removeLocal(_ localEndpoints: [LocalEndpoint]) {
         // This would be implemented by the platform to remove local paths
         var updatedPreconnection = preconnection
         updatedPreconnection.localEndpoints.removeAll { endpoint in
@@ -277,7 +263,7 @@ public actor ConnectionGroup {
     }
     
     /// Abort all connections in the group
-    public func abortGroup() async {
+    public func abortGroup() {
         // Implementation would abort all connections
     }
 }

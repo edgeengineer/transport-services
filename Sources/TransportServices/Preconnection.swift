@@ -57,9 +57,37 @@ public struct Preconnection: Sendable {
         self.platform = platform
     }
 
-    public func resolve() -> (local: [LocalEndpoint], remote: [RemoteEndpoint]) {
-        // Placeholder for implementation
-        return ([], [])
+    /// Resolve endpoint candidates for both local and remote endpoints
+    /// This is typically used before rendezvous to gather candidates for signaling
+    public func resolve() async -> (local: [LocalEndpoint], remote: [RemoteEndpoint]) {
+        // Use the platform's candidate gathering capability
+        do {
+            let candidateSet = try await platform.gatherCandidates(preconnection: self)
+            
+            // Convert platform candidates back to LocalEndpoint and RemoteEndpoint
+            var resolvedLocal: [LocalEndpoint] = []
+            var resolvedRemote: [RemoteEndpoint] = []
+            
+            // Process local candidates
+            for candidate in candidateSet.localCandidates {
+                // Each local candidate represents a resolved local endpoint
+                // with potentially multiple addresses
+                resolvedLocal.append(candidate.endpoint)
+            }
+            
+            // Process remote candidates  
+            for candidate in candidateSet.remoteCandidates {
+                // Each remote candidate represents a resolved remote endpoint
+                // with potentially multiple addresses
+                resolvedRemote.append(candidate.endpoint)
+            }
+            
+            return (resolvedLocal, resolvedRemote)
+        } catch {
+            // If candidate gathering fails, return the original endpoints
+            // This allows the application to proceed with unresolved endpoints
+            return (localEndpoints, remoteEndpoints)
+        }
     }
     
     // MARK: - Connection Methods
