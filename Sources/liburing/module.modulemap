@@ -1,0 +1,5 @@
+module liburing [system] {
+    header "/usr/include/liburing.h"
+    link "uring"
+    export *
+}
