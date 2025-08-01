@@ -28,16 +28,10 @@ public protocol PlatformConnection: Sendable {
     func close() async
     
     /// Abort the connection immediately
-    func abort()
+    func abort() async
     
     /// Get connection state
-    func getState() -> ConnectionState
-    
-    /// Set connection properties
-    func setProperty(_ property: ConnectionProperty, value: Any) async throws
-    
-    /// Get connection properties
-    func getProperty(_ property: ConnectionProperty) async -> Any?
+    func getState() async -> ConnectionState
     
     /// Set the owner connection for proper event handling
     func setOwnerConnection(_ connection: Connection?) async

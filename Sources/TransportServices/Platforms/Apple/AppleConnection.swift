@@ -17,14 +17,13 @@ import Foundation
 import Network
 
 /// Apple platform-specific connection implementation using Network.framework
-public final class AppleConnection: PlatformConnection, @unchecked Sendable {
+public final actor AppleConnection: PlatformConnection {
     private let nwConnection: NWConnection
     private let preconnection: Preconnection
-    // Flag to make sure initiate continuation is resumed only once
-    private var initiateResumed = false
+    
     private var ownerConnection: Connection?
     private var state: ConnectionState = .establishing
-    private let stateLock = NSLock()
+    
     
     init(preconnection: Preconnection) {
         self.preconnection = preconnection
@@ -41,90 +40,69 @@ public final class AppleConnection: PlatformConnection, @unchecked Sendable {
         self.nwConnection = NWConnection(to: nwEndpoint, using: parameters)
         
         // Set up state update handler
-        setupStateHandler()
+        Task { await setupStateHandler() }
+    }
+
+    init(nwConnection: NWConnection, preconnection: Preconnection) {
+        self.nwConnection = nwConnection
+        self.preconnection = preconnection
+        
+        // Set up state update handler
+        Task { await setupStateHandler() }
     }
     
     private func setupStateHandler() {
         nwConnection.stateUpdateHandler = { [weak self] newState in
-            guard let self = self else { return }
-            
-            self.stateLock.lock()
-            defer { self.stateLock.unlock() }
-            
-            switch newState {
-            case .ready:
-                self.state = .established
-                if let owner = self.ownerConnection {
-                    Task { await owner.updateState(.established) }
-                    owner.eventHandler(.ready(owner))
-                }
-            case .failed(_), .cancelled:
-                self.state = .closed
-                if let owner = self.ownerConnection {
-                    Task { await owner.updateState(.closed) }
-                    owner.eventHandler(.closed(owner))
-                }
-            default:
-                break
+            Task {
+                await self?.handleStateUpdate(newState)
             }
+        }
+    }
+
+    private func handleStateUpdate(_ newState: NWConnection.State) {
+        switch newState {
+        case .ready:
+            self.state = .established
+            if let owner = self.ownerConnection {
+                Task { await owner.updateState(.established) }
+                owner.eventHandler(.ready(owner))
+            }
+        case .failed(_), .cancelled:
+            self.state = .closed
+            if let owner = self.ownerConnection {
+                Task { await owner.updateState(.closed) }
+                owner.eventHandler(.closed(owner))
+            }
+        default:
+            break
         }
     }
     
     public func initiate() async throws {
-        nwConnection.start(queue: .global())
-        
-        // Wait for connection to be ready or fail, but cap at 100ms for tests
-        try await withCheckedThrowingContinuation { continuation in
-            // Fallback: resume as established quickly if no immediate network response (test environment)
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                guard let self = self, !self.initiateResumed else { return }
-                self.stateLock.lock()
-                self.state = .established
-                self.stateLock.unlock()
-                if let owner = self.ownerConnection {
-                    Task { await owner.updateState(.established) }
-                    owner.eventHandler(.ready(owner))
-                }
-                self.initiateResumed = true
-                continuation.resume()
-            }
-            nwConnection.stateUpdateHandler = { [weak self] state in
-                guard let self = self else { return }
-                
-                switch state {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            nwConnection.stateUpdateHandler = { [weak self] newState in
+                guard let self else { return }
+                switch newState {
                 case .ready:
-                    guard !self.initiateResumed else { return }
-                    self.initiateResumed = true
-                    self.stateLock.lock()
-                    self.state = .established
-                    self.stateLock.unlock()
-                    if let owner = self.ownerConnection {
-                        Task { await owner.updateState(.established) }
-                        owner.eventHandler(.ready(owner))
+                    Task {
+                        await self.handleStateUpdate(newState)
+                        continuation.resume()
                     }
-                    self.setupStateHandler() // Re-setup normal handler
-                    continuation.resume()
                 case .failed(let error):
-                    guard !self.initiateResumed else { return }
-                    self.initiateResumed = true
-                    self.stateLock.lock()
-                    self.state = .closed
-                    self.stateLock.unlock()
-                    if let owner = self.ownerConnection {
-                        Task { await owner.updateState(.closed) }
-                        owner.eventHandler(.closed(owner))
+                    Task {
+                        await self.handleStateUpdate(newState)
+                        continuation.resume(throwing: error)
                     }
-                    self.setupStateHandler() // Re-setup normal handler
-                    continuation.resume(throwing: error)
                 default:
-                    break
+                    Task { await self.handleStateUpdate(newState) }
                 }
             }
+            nwConnection.start(queue: .global())
         }
     }
     
     public func send(data: Data, context: MessageContext, endOfMessage: Bool) async throws {
-        guard getState() == .established else {
+        guard await getState() == .established else {
             throw TransportServicesError.connectionClosed
         }
         
@@ -140,7 +118,7 @@ public final class AppleConnection: PlatformConnection, @unchecked Sendable {
     }
     
     public func receive(minIncompleteLength: Int?, maxLength: Int?) async throws -> (Data, MessageContext, Bool) {
-        guard getState() == .established else {
+        guard await getState() == .established else {
             throw TransportServicesError.connectionClosed
         }
         
@@ -160,35 +138,16 @@ public final class AppleConnection: PlatformConnection, @unchecked Sendable {
     }
     
     public func close() async {
-        await MainActor.run {
-            stateLock.lock()
-            state = .closing
-            stateLock.unlock()
-            if let owner = self.ownerConnection {
-                Task { await owner.updateState(.closing) }
-            }
+        state = .closing
+        if let owner = self.ownerConnection {
+            Task { await owner.updateState(.closing) }
         }
-        
+
         nwConnection.cancel()
-        
-        // Wait for cancellation
-        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-        
-        await MainActor.run {
-            stateLock.lock()
-            state = .closed
-            stateLock.unlock()
-            if let owner = self.ownerConnection {
-                Task { await owner.updateState(.closed) }
-                owner.eventHandler(.closed(owner))
-            }
-        }
     }
     
-    public func abort() {
-        stateLock.lock()
+    public func abort() async {
         state = .closed
-        stateLock.unlock()
         if let owner = self.ownerConnection {
             Task { await owner.updateState(.closed) }
             owner.eventHandler(.connectionError(owner, reason: "aborted"))
@@ -197,21 +156,11 @@ public final class AppleConnection: PlatformConnection, @unchecked Sendable {
         nwConnection.forceCancel()
     }
     
-    public func getState() -> ConnectionState {
-        stateLock.lock()
-        defer { stateLock.unlock() }
+    public func getState() async -> ConnectionState {
         return state
     }
     
-    public func setProperty(_ property: ConnectionProperty, value: Any) async throws {
-        // Property setting would be implemented based on available NWConnection APIs
-        // For now, we'll just accept the properties without error
-    }
     
-    public func getProperty(_ property: ConnectionProperty) async -> Any? {
-        // Property getting would be implemented based on available NWConnection APIs
-        return nil
-    }
     
     public func setOwnerConnection(_ connection: Connection?) async {
         self.ownerConnection = connection
@@ -259,15 +208,6 @@ public final class AppleConnection: PlatformConnection, @unchecked Sendable {
     }
 }
 
-// Extension to allow creating AppleConnection from existing NWConnection
-extension AppleConnection {
-    convenience init(nwConnection: NWConnection, preconnection: Preconnection) {
-        self.init(preconnection: preconnection)
-        // Replace the connection - this is a hack but needed for accept()
-        // In a real implementation, we'd have a different initializer
-    }
-}
-
 #else
 
 /// Stub implementation for non-Apple platforms
@@ -286,13 +226,11 @@ public final class AppleConnection: PlatformConnection {
     
     public func close() async {}
     
-    public func abort() {}
+    public func abort() async {}
     
-    public func getState() -> ConnectionState { .closed }
+    public func getState() async -> ConnectionState { .closed }
     
-    public func setProperty(_ property: ConnectionProperty, value: Any) async throws {}
     
-    public func getProperty(_ property: ConnectionProperty) async -> Any? { nil }
     
     public func setOwnerConnection(_ connection: Connection?) async {}
 }

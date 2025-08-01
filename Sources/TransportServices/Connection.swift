@@ -51,9 +51,9 @@ public actor Connection {
     }
     
     /// Abort the connection immediately
-    public func abort() {
+    public func abort() async {
         state = .closed  // Abort should immediately close
-        platformConnection.abort()
+        await platformConnection.abort()
         // Platform connection will handle events
     }
     
@@ -167,30 +167,7 @@ public actor Connection {
         _properties
     }
     
-    /// Set a specific connection property
-    public func setConnectionProperty(_ property: ConnectionProperty) async throws {
-        try await platformConnection.setProperty(property, value: property)
-        
-        // Update local properties based on the property type
-        switch property {
-        case .multipathPolicy(let policy):
-            _properties.multipathPolicy = policy
-        case .priority(let priority):
-            _properties.connPriority = UInt(priority)
-        case .connectionTimeout(let timeout):
-            _properties.connTimeout = timeout
-        case .keepAlive(let enabled, let interval):
-            _properties.keepAlive = enabled ? .require : .prohibit
-            _properties.keepAliveTimeout = interval
-        default:
-            break
-        }
-    }
     
-    /// Get a connection property
-    public func getConnectionProperty(_ property: ConnectionProperty) async -> Any? {
-        return await platformConnection.getProperty(property)
-    }
     
     // MARK: - Endpoint Management
     

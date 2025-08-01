@@ -213,6 +213,8 @@ private func withTimeout<T>(_ timeout: TimeInterval?, operation: @escaping @Send
 
 /// Transport Services API errors
 public enum TransportServicesError: Error {
+    case connectionFailed
+    case timedOut
     case noLocalEndpoint
     case noRemoteEndpoint
     case messageNotSafelyReplayable
