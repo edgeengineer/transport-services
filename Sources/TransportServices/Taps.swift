@@ -221,4 +221,5 @@ public enum TransportServicesError: Error {
     case establishmentFailed(reason: String)
     case connectionClosed
     case invalidConfiguration
+    case notSupported(reason: String)
 }

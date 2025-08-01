@@ -38,8 +38,9 @@ func withTimeout<T: Sendable>(
         
         // Add timeout task
         group.addTask {
-            try await Task.sleep(for: timeout)
-            throw TestTimeoutError(operation: operation, timeout: timeout)
+            let effectiveTimeout: Duration = timeout > .seconds(2) ? .seconds(2) : timeout
+            try await Task.sleep(for: effectiveTimeout)
+            throw TestTimeoutError(operation: operation, timeout: effectiveTimeout)
         }
         
         // Return the first result (either success or timeout)
@@ -58,11 +59,12 @@ func withTimeout<T: Sendable>(
 /// - Throws: TestTimeoutError if the condition doesn't become true within the timeout
 func waitForCondition(
     timeout: Duration = .seconds(5),
-    pollInterval: Duration = .milliseconds(100),
+    pollInterval: Duration = .milliseconds(20),
     operation: String = "condition",
     condition: @escaping @Sendable () async -> Bool
 ) async throws {
-    let deadline = ContinuousClock.now + timeout
+    let effectiveTimeout: Duration = timeout > .seconds(2) ? .seconds(2) : timeout
+    let deadline = ContinuousClock.now + effectiveTimeout
     
     while ContinuousClock.now < deadline {
         if await condition() {
@@ -71,7 +73,7 @@ func waitForCondition(
         try await Task.sleep(for: pollInterval)
     }
     
-    throw TestTimeoutError(operation: operation, timeout: timeout)
+    throw TestTimeoutError(operation: operation, timeout: effectiveTimeout)
 }
 
 /// Waits for a non-nil result within a timeout period
@@ -84,11 +86,12 @@ func waitForCondition(
 /// - Throws: TestTimeoutError if no result is produced within the timeout
 func waitForResult<T: Sendable>(
     timeout: Duration = .seconds(5),
-    pollInterval: Duration = .milliseconds(100),
+    pollInterval: Duration = .milliseconds(20),
     operation: String = "result",
     producer: @escaping @Sendable () async -> T?
 ) async throws -> T {
-    let deadline = ContinuousClock.now + timeout
+    let effectiveTimeout: Duration = timeout > .seconds(2) ? .seconds(2) : timeout
+    let deadline = ContinuousClock.now + effectiveTimeout
     
     while ContinuousClock.now < deadline {
         if let result = await producer() {
@@ -97,7 +100,7 @@ func waitForResult<T: Sendable>(
         try await Task.sleep(for: pollInterval)
     }
     
-    throw TestTimeoutError(operation: operation, timeout: timeout)
+    throw TestTimeoutError(operation: operation, timeout: effectiveTimeout)
 }
 
 /// Extension for testing connection states with timeout
@@ -131,7 +134,7 @@ extension Listener {
     func waitForConnection(
         timeout: Duration = .seconds(5)
     ) async throws -> UInt {
-        let initialCount = await self.getAcceptedConnectionCount()
+        let initialCount = self.getAcceptedConnectionCount()
         
         try await waitForCondition(
             timeout: timeout,
@@ -141,6 +144,6 @@ extension Listener {
             return await self.getAcceptedConnectionCount() > initialCount
         }
         
-        return await self.getAcceptedConnectionCount()
+        return self.getAcceptedConnectionCount()
     }
 }

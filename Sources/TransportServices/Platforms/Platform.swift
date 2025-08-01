@@ -13,6 +13,11 @@ import Foundation
 #endif
 #endif
 
+@globalActor 
+actor PlatformActor: GlobalActor {
+    static let shared = PlatformActor()
+}
+
 /// Platform-specific implementation of the Transport Services API
 public protocol Platform: Sendable {
     /// Create a connection object for this platform

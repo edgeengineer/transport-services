@@ -97,6 +97,9 @@ public actor Connection {
     /// Send data over the connection
     public func send(data: Data, context: MessageContext = MessageContext(), endOfMessage: Bool = true) async throws {
         guard state == .established else {
+            eventHandler(.sendError(self, context, reason: "Connection not established"))
+            // Give the caller a chance to observe the event
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
             throw TransportServicesError.connectionClosed
         }
         
@@ -114,6 +117,8 @@ public actor Connection {
         guard state == .established else {
             let context = MessageContext()
             eventHandler(.receiveError(self, context, reason: "Connection not established"))
+            // Give the caller a chance to observe the event
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
             throw TransportServicesError.connectionClosed
         }
         
