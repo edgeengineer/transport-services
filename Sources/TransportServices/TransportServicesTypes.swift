@@ -64,3 +64,18 @@ public enum ConnectionState: Sendable {
     case closing
     case closed
 }
+
+/// Transport Services API errors
+public enum TransportServicesError: Error {
+    case connectionFailed
+    case timedOut
+    case noLocalEndpoint
+    case noRemoteEndpoint
+    case messageNotSafelyReplayable
+    case timeout
+    case protocolNotSupported
+    case establishmentFailed(reason: String)
+    case connectionClosed
+    case invalidConfiguration
+    case notSupported(reason: String)
+}

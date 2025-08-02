@@ -23,22 +23,13 @@ public struct ApplePlatform: Platform {
     
     public init() {}
     
-    public func createConnection(preconnection: Preconnection, 
-                               eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any PlatformConnection {
-        return AppleConnection(preconnection: preconnection)
+    public func createConnection(preconnection: any Preconnection, 
+                               eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any Connection {
+        return AppleConnection(preconnection: preconnection, eventHandler: eventHandler)
     }
     
-    public func createListener(preconnection: Preconnection, 
-                             eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any PlatformListener {
-        do {
-            return try AppleListener(preconnection: preconnection)
-        } catch {
-            // Return a failed listener that will error on listen()
-            return FailedListener(error: error)
-        }
-    }
     
-    public func gatherCandidates(preconnection: Preconnection) async throws -> CandidateSet {
+    public func gatherCandidates(preconnection: any Preconnection) async throws -> CandidateSet {
         var localCandidates: [LocalCandidate] = []
         var remoteCandidates: [RemoteCandidate] = []
         
@@ -95,7 +86,7 @@ public struct ApplePlatform: Platform {
     }
     
     public func getAvailableInterfaces() async throws -> [NetworkInterface] {
-        let interfaces: [NetworkInterface] = []
+        let _: [NetworkInterface] = []
         
         // Use NWPathMonitor to get interface information
         let monitor = NWPathMonitor()
@@ -214,20 +205,6 @@ public struct ApplePlatform: Platform {
     }
 }
 
-// Helper struct for failed listeners
-struct FailedListener: PlatformListener {
-    let error: Error
-    
-    func listen() async throws {
-        throw error
-    }
-    
-    func stop() async {}
-    
-    func accept() async throws -> any PlatformConnection {
-        throw error
-    }
-}
 
 #else
 
@@ -235,9 +212,9 @@ struct FailedListener: PlatformListener {
 public struct ApplePlatform: Platform {
     public init() {}
     
-    public func createConnection(preconnection: Preconnection, 
-                               eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any PlatformConnection {
-        return AppleConnection()
+    public func createConnection(preconnection: any Preconnection, 
+                               eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any Connection {
+        return AppleConnection(preconnection: preconnection, eventHandler: eventHandler)
     }
     
     public func createListener(preconnection: Preconnection, 
@@ -245,7 +222,7 @@ public struct ApplePlatform: Platform {
         return AppleListener()
     }
     
-    public func gatherCandidates(preconnection: Preconnection) async throws -> CandidateSet {
+    public func gatherCandidates(preconnection: any Preconnection) async throws -> CandidateSet {
         throw TransportServicesError.notSupported("Apple Network.framework not available")
     }
     

@@ -21,15 +21,12 @@ public final class LinuxPlatform: Platform {
     
     public init() {}
     
-    public func createConnection(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any PlatformConnection {
+    public func createConnection(preconnection: any Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any Connection {
         fatalError("Linux platform not yet implemented - will use io_uring")
     }
     
-    public func createListener(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any PlatformListener {
-        fatalError("Linux platform not yet implemented - will use io_uring")
-    }
     
-    public func gatherCandidates(preconnection: Preconnection) async throws -> CandidateSet {
+    public func gatherCandidates(preconnection: any Preconnection) async throws -> CandidateSet {
         fatalError("Linux platform not yet implemented - will use io_uring")
     }
     

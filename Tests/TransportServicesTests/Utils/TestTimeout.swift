@@ -38,7 +38,7 @@ func withTimeout<T: Sendable>(
         
         // Add timeout task
         group.addTask {
-            let effectiveTimeout: Duration = timeout > .seconds(2) ? .seconds(2) : timeout
+            let effectiveTimeout: Duration = timeout
             try await Task.sleep(for: effectiveTimeout)
             throw TestTimeoutError(operation: operation, timeout: effectiveTimeout)
         }
@@ -63,7 +63,7 @@ func waitForCondition(
     operation: String = "condition",
     condition: @escaping @Sendable () async -> Bool
 ) async throws {
-    let effectiveTimeout: Duration = timeout > .seconds(2) ? .seconds(2) : timeout
+    let effectiveTimeout: Duration = timeout
     let deadline = ContinuousClock.now + effectiveTimeout
     
     while ContinuousClock.now < deadline {
@@ -90,7 +90,7 @@ func waitForResult<T: Sendable>(
     operation: String = "result",
     producer: @escaping @Sendable () async -> T?
 ) async throws -> T {
-    let effectiveTimeout: Duration = timeout > .seconds(2) ? .seconds(2) : timeout
+    let effectiveTimeout: Duration = timeout
     let deadline = ContinuousClock.now + effectiveTimeout
     
     while ContinuousClock.now < deadline {

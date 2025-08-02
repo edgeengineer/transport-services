@@ -17,15 +17,21 @@ import Foundation
 import Network
 
 /// Apple platform-specific listener implementation using Network.framework
-public final class AppleListener: PlatformListener, @unchecked Sendable {
+public final actor AppleListener: Listener {
+    public let preconnection: Preconnection
+    public nonisolated let eventHandler: @Sendable (TransportServicesEvent) -> Void
+    
     private let nwListener: NWListener
-    private let preconnection: Preconnection
     private var pendingConnections: [NWConnection] = []
     private let connectionQueue = DispatchQueue(label: "listener.connections")
     private var isListening = false
+    private var acceptTask: Task<Void, Never>?
+    private var newConnectionLimit: UInt?
+    private var acceptedConnections: UInt = 0
     
-    init(preconnection: Preconnection) throws {
+    init(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) throws {
         self.preconnection = preconnection
+        self.eventHandler = eventHandler
         
         // Create NWParameters based on preconnection properties
         let parameters = AppleListener.createParameters(from: preconnection)
@@ -47,35 +53,45 @@ public final class AppleListener: PlatformListener, @unchecked Sendable {
         }
         
         self.nwListener = listener
-        
-        // Set up handlers
-        setupHandlers()
     }
     
     private func setupHandlers() {
         nwListener.stateUpdateHandler = { [weak self] newState in
             guard let self = self else { return }
             
-            switch newState {
-            case .ready:
-                self.isListening = true
-            case .failed(_), .cancelled:
-                self.isListening = false
-            default:
-                break
+            Task {
+                await self.handleStateUpdate(newState)
             }
         }
         
         nwListener.newConnectionHandler = { [weak self] nwConnection in
             guard let self = self else { return }
             
-            self.connectionQueue.sync {
-                self.pendingConnections.append(nwConnection)
+            Task {
+                await self.addPendingConnection(nwConnection)
             }
         }
     }
     
+    private func handleStateUpdate(_ newState: NWListener.State) {
+        switch newState {
+        case .ready:
+            self.isListening = true
+        case .failed(_), .cancelled:
+            self.isListening = false
+        default:
+            break
+        }
+    }
+    
+    private func addPendingConnection(_ connection: NWConnection) {
+        pendingConnections.append(connection)
+    }
+    
     public func listen() async throws {
+        // Setup handlers before starting
+        setupHandlers()
+        
         nwListener.start(queue: .global())
         
         // Wait for listener to be ready
@@ -93,45 +109,57 @@ public final class AppleListener: PlatformListener, @unchecked Sendable {
                 
                 switch state {
                 case .ready:
-                    self.isListening = true
-                    self.setupHandlers() // Re-setup normal handlers
+                    Task {
+                        await self.handleStateUpdate(state)
+                        await self.setupHandlers() // Re-setup normal handlers
+                    }
                     continuation.resume()
                 case .failed(let error):
-                    self.isListening = false
-                    self.setupHandlers() // Re-setup normal handlers
+                    Task {
+                        await self.handleStateUpdate(state)
+                    }
                     continuation.resume(throwing: error)
                 default:
-                    break
+                    Task {
+                        await self.handleStateUpdate(state)
+                    }
                 }
             }
             
-            // Check if already ready
             checkState()
+        }
+        
+        // Start accepting connections in the background
+        acceptTask = Task {
+            await acceptLoop()
         }
     }
     
     public func stop() async {
+        guard isListening else { return }
+        
         isListening = false
+        acceptTask?.cancel()
         nwListener.cancel()
+        eventHandler(.stopped(self))
     }
     
-    public func accept() async throws -> any PlatformConnection {
+    public func accept() async throws -> any Connection {
         guard isListening else {
             throw TransportServicesError.connectionClosed
         }
         
         // Wait for a pending connection
         while true {
-            let connection = connectionQueue.sync { () -> NWConnection? in
-                if !pendingConnections.isEmpty {
-                    return pendingConnections.removeFirst()
-                }
-                return nil
-            }
-            
-            if let nwConnection = connection {
+            if !pendingConnections.isEmpty {
+                let nwConnection = pendingConnections.removeFirst()
+                
                 // Create a new AppleConnection wrapper
-                let appleConnection = AppleConnection(preconnection: preconnection)
+                let appleConnection = AppleConnection(
+                    nwConnection: nwConnection,
+                    preconnection: preconnection,
+                    eventHandler: eventHandler
+                )
                 
                 // The connection is already being established by Network.framework
                 nwConnection.start(queue: .global())
@@ -142,6 +170,65 @@ public final class AppleListener: PlatformListener, @unchecked Sendable {
             // Wait a bit before checking again
             try await Task.sleep(nanoseconds: 10_000_000) // 10ms
         }
+    }
+    
+    /// Accept incoming connections in a loop
+    private func acceptLoop() async {
+        while isListening && !Task.isCancelled {
+            // Check connection limit
+            if let limit = newConnectionLimit, acceptedConnections >= limit {
+                // Stop accepting new connections
+                break
+            }
+            
+            do {
+                // Accept a new connection
+                let connection = try await accept()
+                acceptedConnections += 1
+                
+                // Deliver connection to application
+                eventHandler(.connectionReceived(self, connection))
+                
+                // Start receiving on the connection if bidirectional
+                if preconnection.transportProperties.direction != .unidirectionalSend {
+                    Task {
+                        await connection.startReceiving()
+                    }
+                }
+                
+            } catch {
+                // If we get an error, it might mean the listener was stopped
+                // or there was a network error
+                if isListening {
+                    // Log error but continue listening
+                    print("Error accepting connection: \(error)")
+                }
+            }
+        }
+        
+        // If we exited the loop due to connection limit, keep the listener active
+        // but stop accepting new connections
+        if let limit = newConnectionLimit, acceptedConnections >= limit {
+            print("Connection limit reached: \(limit)")
+        }
+    }
+    
+    // MARK: - Listener Protocol Implementation
+    
+    public func setNewConnectionLimit(_ value: UInt?) {
+        self.newConnectionLimit = value
+    }
+    
+    public func getNewConnectionLimit() -> UInt? {
+        return newConnectionLimit
+    }
+    
+    public func getAcceptedConnectionCount() -> UInt {
+        return acceptedConnections
+    }
+    
+    public func getProperties() -> TransportProperties {
+        return preconnection.transportProperties
     }
     
     // MARK: - Helper Methods
@@ -171,16 +258,29 @@ public final class AppleListener: PlatformListener, @unchecked Sendable {
 #else
 
 /// Stub implementation for non-Apple platforms
-public final class AppleListener: PlatformListener {
+public final class AppleListener: Listener {
+    public let preconnection: Preconnection
+    public let eventHandler: @Sendable (TransportServicesEvent) -> Void
+    
+    init(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) throws {
+        self.preconnection = preconnection
+        self.eventHandler = eventHandler
+    }
+    
     public func listen() async throws {
         throw TransportServicesError.notSupported(reason: "Apple Network.framework not available")
     }
     
     public func stop() async {}
     
-    public func accept() async throws -> any PlatformConnection {
+    public func accept() async throws -> any Connection {
         throw TransportServicesError.notSupported(reason: "Apple Network.framework not available")
     }
+    
+    public func setNewConnectionLimit(_ value: UInt?) {}
+    public func getNewConnectionLimit() -> UInt? { nil }
+    public func getAcceptedConnectionCount() -> UInt { 0 }
+    public func getProperties() -> TransportProperties { preconnection.transportProperties }
 }
 
 #endif

@@ -21,13 +21,10 @@ actor PlatformActor: GlobalActor {
 /// Platform-specific implementation of the Transport Services API
 public protocol Platform: Sendable {
     /// Create a connection object for this platform
-    func createConnection(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any PlatformConnection
-    
-    /// Create a listener object for this platform
-    func createListener(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any PlatformListener
+    func createConnection(preconnection: any Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any Connection
     
     /// Perform candidate gathering for endpoint resolution
-    func gatherCandidates(preconnection: Preconnection) async throws -> CandidateSet
+    func gatherCandidates(preconnection: any Preconnection) async throws -> CandidateSet
     
     /// Check if a protocol stack is supported on this platform
     func isProtocolStackSupported(_ stack: ProtocolStack) -> Bool

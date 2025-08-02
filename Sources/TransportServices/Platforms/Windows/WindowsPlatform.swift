@@ -21,15 +21,12 @@ public final class WindowsPlatform: Platform {
     
     public init() {}
     
-    public func createConnection(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any PlatformConnection {
+    public func createConnection(preconnection: any Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any Connection {
         fatalError("Windows platform not yet implemented - will use IOCP")
     }
     
-    public func createListener(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any PlatformListener {
-        fatalError("Windows platform not yet implemented - will use IOCP")
-    }
     
-    public func gatherCandidates(preconnection: Preconnection) async throws -> CandidateSet {
+    public func gatherCandidates(preconnection: any Preconnection) async throws -> CandidateSet {
         fatalError("Windows platform not yet implemented - will use IOCP")
     }
     

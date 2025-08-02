@@ -18,8 +18,8 @@ import TransportServices
 struct SimpleServer {
     static func main() async throws {
         // Create a server preconnection with local endpoint
-        let preconnection = Preconnection(
-            localEndpoints: [.tcp(port: 8080)]
+        let preconnection = NewPreconnection(
+            localEndpoints: [LocalEndpoint.tcp(port: 8080)]
         )
         
         // Start listening
@@ -46,7 +46,7 @@ struct SimpleServer {
         await listener.stop()
     }
     
-    static func handleConnection(_ connection: Connection) async {
+    static func handleConnection(_ connection: any Connection) async {
         do {
             // Receive data
             let (data, _) = try await connection.receive()

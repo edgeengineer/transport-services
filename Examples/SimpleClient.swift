@@ -18,14 +18,14 @@ import TransportServices
 struct SimpleClient {
     static func main() async throws {
         // Create a preconnection with TLS
-        let preconnection = Preconnection(
-            remoteEndpoints: [.tcp(host: "example.com", port: 443)],
+        let preconnection = NewPreconnection(
+            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 443)],
             securityParameters: SecurityParameters() // TLS by default
         )
         
         // Or create one without TLS
-        let _ = Preconnection(
-            remoteEndpoints: [.tcp(host: "example.com", port: 80)],
+        let _ = NewPreconnection(
+            remoteEndpoints: [RemoteEndpoint.tcp(host: "example.com", port: 80)],
             transportProperties: TransportProperties()
         )
         

@@ -15,211 +15,83 @@ import Foundation
 #endif
 
 /// Represents an established or establishing transport connection
-public actor Connection {
-    public let preconnection: Preconnection
-    public nonisolated let eventHandler: @Sendable (TransportServicesEvent) -> Void
-    private let platformConnection: any PlatformConnection
-    private let platform: Platform
-    public private(set) var state: ConnectionState = .establishing
-    private var connectionGroup: ConnectionGroup?
-    private var _properties: TransportProperties
+/// Based on RFC 9622 Section 3
+public protocol Connection: Actor {
+    /// The preconnection used to create this connection
+    var preconnection: Preconnection { get }
     
-    /// Initialize a new connection
-    init(preconnection: Preconnection, 
-         eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void,
-         platformConnection: any PlatformConnection,
-         platform: Platform) {
-        self.preconnection = preconnection
-        self.eventHandler = eventHandler
-        self.platformConnection = platformConnection
-        self.platform = platform
-        self._properties = preconnection.transportProperties
-    }
+    /// Event handler for transport events
+    var eventHandler: @Sendable (TransportServicesEvent) -> Void { get }
     
-    /// Update connection state (internal use)
-    func updateState(_ newState: ConnectionState) {
-        self.state = newState
-    }
+    /// Current state of the connection
+    var state: ConnectionState { get }
+    
+    /// Transport properties for this connection
+    var properties: TransportProperties { get }
+    
+    /// The connection group this connection belongs to
+    var group: ConnectionGroup? { get }
     
     // MARK: - Connection Lifecycle
     
     /// Close the connection gracefully
-    public func close() async {
-        state = .closing
-        await platformConnection.close()
-        // Platform connection will handle state update and event
-    }
+    func close() async
     
     /// Abort the connection immediately
-    public func abort() async {
-        state = .closed  // Abort should immediately close
-        await platformConnection.abort()
-        // Platform connection will handle events
-    }
+    func abort()
     
     /// Clone this connection to create a new connection with same properties
-    public func clone() async throws -> Connection {
-        // Create new platform connection with same preconnection
-        let newPlatformConnection = platform.createConnection(
-            preconnection: preconnection,
-            eventHandler: eventHandler
-        )
-        
-        let newConnection = Connection(
-            preconnection: preconnection,
-            eventHandler: eventHandler,
-            platformConnection: newPlatformConnection,
-            platform: platform
-        )
-        
-        // Set the owner connection on the platform connection
-        await newPlatformConnection.setOwnerConnection(newConnection)
-        
-        // Copy connection group membership
-        if let group = connectionGroup {
-            await group.addConnection(newConnection)
-            await newConnection.setGroup(group)
-        }
-        
-        // Initiate the cloned connection - platform will handle events
-        do {
-            try await newPlatformConnection.initiate()
-        } catch {
-            eventHandler(.cloneError(self, reason: error.localizedDescription))
-            throw error
-        }
-        
-        return newConnection
-    }
+    func clone() async throws -> any Connection
     
     // MARK: - Data Transfer
     
     /// Send data over the connection
-    public func send(data: Data, context: MessageContext = MessageContext(), endOfMessage: Bool = true) async throws {
-        guard state == .established else {
-            eventHandler(.sendError(self, context, reason: "Connection not established"))
-            // Give the caller a chance to observe the event
-            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-            throw TransportServicesError.connectionClosed
-        }
-        
-        do {
-            try await platformConnection.send(data: data, context: context, endOfMessage: endOfMessage)
-            eventHandler(.sent(self, context))
-        } catch {
-            eventHandler(.sendError(self, context, reason: error.localizedDescription))
-            throw error
-        }
-    }
+    func send(data: Data, context: MessageContext, endOfMessage: Bool) async throws
     
     /// Receive data from the connection
-    public func receive(minIncompleteLength: Int? = nil, maxLength: Int? = nil) async throws -> (Data, MessageContext) {
-        guard state == .established else {
-            let context = MessageContext()
-            eventHandler(.receiveError(self, context, reason: "Connection not established"))
-            // Give the caller a chance to observe the event
-            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-            throw TransportServicesError.connectionClosed
-        }
-        
-        do {
-            let (data, context, endOfMessage) = try await platformConnection.receive(
-                minIncompleteLength: minIncompleteLength,
-                maxLength: maxLength
-            )
-            
-            if endOfMessage {
-                eventHandler(.received(self, data, context))
-            } else {
-                eventHandler(.receivedPartial(self, data, context, endOfMessage: false))
-            }
-            
-            return (data, context)
-        } catch {
-            let context = MessageContext()
-            eventHandler(.receiveError(self, context, reason: error.localizedDescription))
-            throw error
-        }
-    }
+    func receive(minIncompleteLength: Int?, maxLength: Int?) async throws -> (Data, MessageContext)
     
     /// Start receiving data continuously
-    public func startReceiving(minIncompleteLength: Int? = nil, maxLength: Int? = nil) {
-        Task {
-            while state == .established {
-                do {
-                    let _ = try await receive(
-                        minIncompleteLength: minIncompleteLength,
-                        maxLength: maxLength
-                    )
-                } catch {
-                    // Connection closed or error occurred
-                    break
-                }
-            }
-        }
-    }
-    
-    // MARK: - Properties
-    
-    /// Transport properties for this connection (read-only)
-    /// To modify properties, use setConnectionProperty
-    public var properties: TransportProperties {
-        _properties
-    }
-    
-    
+    func startReceiving(minIncompleteLength: Int?, maxLength: Int?)
     
     // MARK: - Endpoint Management
     
     /// Add remote endpoints for multipath or migration
-    public func addRemote(_ remoteEndpoints: [RemoteEndpoint]) {
-        // This would be implemented by the platform to add new paths
-        // For now, just update the preconnection copy
-        var updatedPreconnection = preconnection
-        updatedPreconnection.remoteEndpoints.append(contentsOf: remoteEndpoints)
-    }
+    func addRemote(_ remoteEndpoints: [RemoteEndpoint])
     
     /// Remove remote endpoints
-    public func removeRemote(_ remoteEndpoints: [RemoteEndpoint]) {
-        // This would be implemented by the platform to remove paths
-        var updatedPreconnection = preconnection
-        updatedPreconnection.remoteEndpoints.removeAll { endpoint in
-            remoteEndpoints.contains { $0.hostName == endpoint.hostName && $0.port == endpoint.port }
-        }
-    }
+    func removeRemote(_ remoteEndpoints: [RemoteEndpoint])
     
     /// Add local endpoints for multipath or migration
-    public func addLocal(_ localEndpoints: [LocalEndpoint]) {
-        // This would be implemented by the platform to add new local paths
-        var updatedPreconnection = preconnection
-        updatedPreconnection.localEndpoints.append(contentsOf: localEndpoints)
-    }
+    func addLocal(_ localEndpoints: [LocalEndpoint])
     
     /// Remove local endpoints
-    public func removeLocal(_ localEndpoints: [LocalEndpoint]) {
-        // This would be implemented by the platform to remove local paths
-        var updatedPreconnection = preconnection
-        updatedPreconnection.localEndpoints.removeAll { endpoint in
-            localEndpoints.contains { $0.interface == endpoint.interface && $0.port == endpoint.port }
-        }
-    }
+    func removeLocal(_ localEndpoints: [LocalEndpoint])
     
     // MARK: - Connection Groups
     
-    /// The connection group this connection belongs to
-    public var group: ConnectionGroup? {
-        connectionGroup
+    /// Set the connection group
+    func setGroup(_ group: ConnectionGroup?)
+}
+
+/// Default implementations for Connection protocol
+public extension Connection {
+    func send(data: Data, context: MessageContext = MessageContext(), endOfMessage: Bool = true) async throws {
+        try await send(data: data, context: context, endOfMessage: endOfMessage)
     }
     
-    /// Set the connection group
-    public func setGroup(_ group: ConnectionGroup?) {
-        connectionGroup = group
+    func receive(minIncompleteLength: Int? = nil, maxLength: Int? = nil) async throws -> (Data, MessageContext) {
+        try await receive(minIncompleteLength: minIncompleteLength, maxLength: maxLength)
+    }
+    
+    func startReceiving(minIncompleteLength: Int? = nil, maxLength: Int? = nil) {
+        startReceiving(minIncompleteLength: minIncompleteLength, maxLength: maxLength)
     }
 }
 
 /// Represents a group of related connections
 public actor ConnectionGroup {
-    private var connections: Set<ObjectIdentifier> = []
+    private var connections: [any Connection] = []
     private weak var scheduler: ConnectionGroupScheduler?
     
     public init(scheduler: ConnectionGroupScheduler? = nil) {
@@ -227,13 +99,20 @@ public actor ConnectionGroup {
     }
     
     /// Add a connection to the group
-    func addConnection(_ connection: Connection) {
-        connections.insert(ObjectIdentifier(connection))
+    func addConnection(_ connection: any Connection) {
+        connections.append(connection)
     }
     
     /// Remove a connection from the group
-    func removeConnection(_ connection: Connection) {
-        connections.remove(ObjectIdentifier(connection))
+    func removeConnection(_ connection: any Connection) {
+        connections.removeAll { existingConnection in
+            // Compare by identity if possible, otherwise by preconnection
+            if let c1 = existingConnection as? AnyObject,
+               let c2 = connection as? AnyObject {
+                return c1 === c2
+            }
+            return false
+        }
     }
     
     /// The number of connections in the group
@@ -249,10 +128,13 @@ public actor ConnectionGroup {
     /// Abort all connections in the group
     public func abortGroup() {
         // Implementation would abort all connections
+        Task {
+            // Would iterate through connections and abort them
+        }
     }
 }
 
 /// Connection group scheduler for managing multiple connections
 public protocol ConnectionGroupScheduler: AnyObject {
-    func schedule(data: Data, context: MessageContext, group: ConnectionGroup) async -> Connection?
+    func schedule(data: Data, context: MessageContext, group: ConnectionGroup) async -> (any Connection)?
 }

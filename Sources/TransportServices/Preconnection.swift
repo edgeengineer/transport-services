@@ -5,7 +5,6 @@
 //  Maximilian Alexander
 //
 
-
 #if !hasFeature(Embedded)
 #if canImport(FoundationEssentials)
 import FoundationEssentials
@@ -14,226 +13,55 @@ import Foundation
 #endif
 #endif
 
-public struct Preconnection: Sendable {
-    public var localEndpoints: [LocalEndpoint]
-    public var remoteEndpoints: [RemoteEndpoint]
-    public var transportProperties: TransportProperties
-    public var securityParameters: SecurityParameters
+/// Represents a potential connection before it is established
+/// Based on RFC 9622 Section 6
+public protocol Preconnection: Sendable {
+    /// Local endpoints for this preconnection
+    var localEndpoints: [LocalEndpoint] { get set }
     
-    // Private platform instance
-    private let platform: Platform
-
-    public init(localEndpoints: [LocalEndpoint] = [],
-                remoteEndpoints: [RemoteEndpoint] = [],
-                transportProperties: TransportProperties = TransportProperties(),
-                securityParameters: SecurityParameters = SecurityParameters()) {
-        self.localEndpoints = localEndpoints
-        self.remoteEndpoints = remoteEndpoints
-        self.transportProperties = transportProperties
-        self.securityParameters = securityParameters
-        
-        // Initialize platform based on current OS
-        #if canImport(Network)
-        self.platform = ApplePlatform()
-        #elseif os(Linux)
-        self.platform = LinuxPlatform()
-        #elseif os(Windows)
-        self.platform = WindowsPlatform()
-        #else
-        fatalError("Unsupported platform")
-        #endif
-    }
+    /// Remote endpoints for this preconnection
+    var remoteEndpoints: [RemoteEndpoint] { get set }
     
-    // Init with custom platform for testing
-    public init(localEndpoints: [LocalEndpoint] = [],
-                remoteEndpoints: [RemoteEndpoint] = [],
-                transportProperties: TransportProperties = TransportProperties(),
-                securityParameters: SecurityParameters = SecurityParameters(),
-                platform: Platform) {
-        self.localEndpoints = localEndpoints
-        self.remoteEndpoints = remoteEndpoints
-        self.transportProperties = transportProperties
-        self.securityParameters = securityParameters
-        self.platform = platform
-    }
-
+    /// Transport properties for this preconnection
+    var transportProperties: TransportProperties { get set }
+    
+    /// Security parameters for this preconnection
+    var securityParameters: SecurityParameters { get set }
+    
     /// Resolve endpoint candidates for both local and remote endpoints
-    /// This is typically used before rendezvous to gather candidates for signaling
-    public func resolve() async -> (local: [LocalEndpoint], remote: [RemoteEndpoint]) {
-        // Use the platform's candidate gathering capability
-        do {
-            let candidateSet = try await platform.gatherCandidates(preconnection: self)
-            
-            // Convert platform candidates back to LocalEndpoint and RemoteEndpoint
-            var resolvedLocal: [LocalEndpoint] = []
-            var resolvedRemote: [RemoteEndpoint] = []
-            
-            // Process local candidates
-            for candidate in candidateSet.localCandidates {
-                // Each local candidate represents a resolved local endpoint
-                // with potentially multiple addresses
-                resolvedLocal.append(candidate.endpoint)
-            }
-            
-            // Process remote candidates  
-            for candidate in candidateSet.remoteCandidates {
-                // Each remote candidate represents a resolved remote endpoint
-                // with potentially multiple addresses
-                resolvedRemote.append(candidate.endpoint)
-            }
-            
-            return (resolvedLocal, resolvedRemote)
-        } catch {
-            // If candidate gathering fails, return the original endpoints
-            // This allows the application to proceed with unresolved endpoints
-            return (localEndpoints, remoteEndpoints)
-        }
-    }
-    
-    // MARK: - Connection Methods
+    func resolve() async -> (local: [LocalEndpoint], remote: [RemoteEndpoint])
     
     /// Initiate a connection to a remote endpoint
-    public func initiate(
-        timeout: TimeInterval? = nil,
-        eventHandler: ((@Sendable (TransportServicesEvent) -> Void))? = nil
-    ) async throws -> Connection {
-        // Gather candidates
-        let _ = try await platform.gatherCandidates(preconnection: self)
-        
-        // Create platform connection
-        let handler: @Sendable (TransportServicesEvent) -> Void = eventHandler ?? { _ in }
-        let platformConnection = platform.createConnection(
-            preconnection: self,
-            eventHandler: handler
-        )
-        
-        // Create TAPS connection wrapper
-        let connection = Connection(
-            preconnection: self,
-            eventHandler: handler,
-            platformConnection: platformConnection,
-            platform: platform
-        )
-        
-        // Set the owner connection on the platform connection
-        await platformConnection.setOwnerConnection(connection)
-        
-        // Initiate the platform connection - it will handle state updates and events
-        try await withTimeout(timeout) {
-            try await platformConnection.initiate()
-        }
-        
-        return connection
-    }
+    func initiate(timeout: TimeInterval?, eventHandler: ((@Sendable (TransportServicesEvent) -> Void))?) async throws -> any Connection
     
     /// Initiate a connection with initial data
-    public func initiateWithSend(
-        messageData: Data,
-        messageContext: MessageContext = MessageContext(),
-        timeout: TimeInterval? = nil,
-        eventHandler: ((@Sendable (TransportServicesEvent) -> Void))? = nil
-    ) async throws -> Connection {
-        // Ensure message is safely replayable for 0-RTT
-        guard messageContext.safelyReplayable else {
-            throw TransportServicesError.messageNotSafelyReplayable
-        }
-        
-        let connection: Connection = try await initiate(
-            timeout: timeout,
-            eventHandler: eventHandler
-        )
-        
-        // Send initial data
-        try await connection.send(data: messageData, context: messageContext)
-        
-        return connection
-    }
+    func initiateWithSend(messageData: Data, messageContext: MessageContext, timeout: TimeInterval?, eventHandler: ((@Sendable (TransportServicesEvent) -> Void))?) async throws -> any Connection
     
     /// Listen for incoming connections
-    public func listen(
-        eventHandler: ((@Sendable (TransportServicesEvent) -> Void))? = nil
-    ) async throws -> Listener {
-        // Validate that local endpoint is specified
-        guard !localEndpoints.isEmpty else {
-            throw TransportServicesError.noLocalEndpoint
-        }
-        
-        // Create platform listener
-        let handler: @Sendable (TransportServicesEvent) -> Void = eventHandler ?? { _ in }
-        let platformListener = platform.createListener(
-            preconnection: self,
-            eventHandler: handler
-        )
-        
-        // Create TAPS listener wrapper
-        let listener = Listener(
-            preconnection: self,
-            eventHandler: handler,
-            platformListener: platformListener,
-            platform: platform
-        )
-        
-        // Start listening
-        try await platformListener.listen()
-        
-        // Start accepting connections in the background
-        Task {
-            await listener.acceptLoop()
-        }
-        
-        return listener
-    }
+    func listen(eventHandler: ((@Sendable (TransportServicesEvent) -> Void))?) async throws -> any Listener
     
     /// Establish a peer-to-peer connection using rendezvous
-    public func rendezvous(
-        eventHandler: ((@Sendable (TransportServicesEvent) -> Void))? = nil
-    ) async throws -> (Connection, Listener) {
-        // Validate endpoints
-        guard !localEndpoints.isEmpty else {
-            throw TransportServicesError.noLocalEndpoint
-        }
-        guard !remoteEndpoints.isEmpty else {
-            throw TransportServicesError.noRemoteEndpoint
-        }
-        
-        // Start both outbound and inbound simultaneously
-        let handler: @Sendable (TransportServicesEvent) -> Void = eventHandler ?? { _ in }
-        async let outbound = initiate(eventHandler: handler)
-        async let inbound = listen(eventHandler: handler)
-        
-        let connection = try await outbound
-        let listener = try await inbound
-        
-        // Send RendezvousDone event
-        handler(TransportServicesEvent.rendezvousDone(self, connection))
-        
-        return (connection, listener)
-    }
-
-    public func addRemote(_ remoteEndpoints: [RemoteEndpoint]) {
-        // Placeholder for implementation
-    }
+    func rendezvous(eventHandler: ((@Sendable (TransportServicesEvent) -> Void))?) async throws -> (any Connection, any Listener)
+    
+    /// Add remote endpoints for multipath or migration
+    mutating func addRemote(_ remoteEndpoints: [RemoteEndpoint])
 }
 
-// MARK: - Helper Functions
-
-private func withTimeout<T>(_ timeout: TimeInterval?, operation: @escaping @Sendable () async throws -> T) async throws -> T where T: Sendable {
-    if let timeout = timeout {
-        return try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { @Sendable in
-                try await operation()
-            }
-            
-            group.addTask { @Sendable in
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                throw TransportServicesError.timeout
-            }
-            
-            let result = try await group.next()!
-            group.cancelAll()
-            return result
-        }
-    } else {
-        return try await operation()
+/// Default implementations for convenience methods
+public extension Preconnection {
+    func initiate(timeout: TimeInterval? = nil, eventHandler: ((@Sendable (TransportServicesEvent) -> Void))? = nil) async throws -> any Connection {
+        try await initiate(timeout: timeout, eventHandler: eventHandler)
+    }
+    
+    func initiateWithSend(messageData: Data, messageContext: MessageContext = MessageContext(), timeout: TimeInterval? = nil, eventHandler: ((@Sendable (TransportServicesEvent) -> Void))? = nil) async throws -> any Connection {
+        try await initiateWithSend(messageData: messageData, messageContext: messageContext, timeout: timeout, eventHandler: eventHandler)
+    }
+    
+    func listen(eventHandler: ((@Sendable (TransportServicesEvent) -> Void))? = nil) async throws -> any Listener {
+        try await listen(eventHandler: eventHandler)
+    }
+    
+    func rendezvous(eventHandler: ((@Sendable (TransportServicesEvent) -> Void))? = nil) async throws -> (any Connection, any Listener) {
+        try await rendezvous(eventHandler: eventHandler)
     }
 }

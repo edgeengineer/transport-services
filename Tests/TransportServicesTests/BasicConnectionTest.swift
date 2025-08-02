@@ -17,20 +17,22 @@ struct BasicConnectionTest {
     
     @Test("Test basic connection establishment")
     func testBasicConnection() async throws {
-        // Create a simple preconnection with direct IP (127.0.0.1 = localhost)
+        // Create a simple preconnection with an unreachable address
+        // Using a reserved TEST-NET-1 address that should fail quickly
         var endpoint = RemoteEndpoint()
-        endpoint.ipAddress = "127.0.0.1"
+        endpoint.ipAddress = "192.0.2.1"
         endpoint.port = 12345
         
-        let preconnection = Preconnection(
+        var preconnection = NewPreconnection(
             remoteEndpoints: [endpoint]
         )
+        preconnection.transportProperties.connTimeout = 1.0 // 1 second timeout
         
         let eventCollector = EventCollector()
         
         // Try to establish connection with event tracking
         do {
-            let connection = try await withTimeout(.seconds(10), operation: "basic connection") {
+            let connection = try await withTimeout(.seconds(10), operation: "basic connection") { [preconnection] in
                 try await preconnection.initiate { event in
                     Task {
                         await eventCollector.add(event)
@@ -47,10 +49,12 @@ struct BasicConnectionTest {
                     }
                 }
             }
-            // Check state
+            // Wait for connection to fail and transition to closed
+            try await connection.waitForState(.closed)
+            
             let state = await connection.state
             print("Connection state: \(state)")
-            #expect(state == .failed)
+            #expect(state == .closed)
         
             // Check for ready event
             let hasReady = await eventCollector.hasReadyEvent()
@@ -77,20 +81,23 @@ struct BasicConnectionTest {
     @Test("Test connection without event handler")
     func testConnectionNoHandler() async throws {
         var endpoint = RemoteEndpoint()
-        endpoint.ipAddress = "127.0.0.1" 
+        endpoint.ipAddress = "192.0.2.1" 
         endpoint.port = 12345
         
-        let preconnection = Preconnection(
+        var preconnection = NewPreconnection(
             remoteEndpoints: [endpoint]
         )
+        preconnection.transportProperties.connTimeout = 1.0 // 1 second timeout
         
         // Should work without event handler
         do {
-            let connection = try await withTimeout(.seconds(10), operation: "connection without handler") {
+            let connection = try await withTimeout(.seconds(10), operation: "connection without handler") { [preconnection] in
                 try await preconnection.initiate()
             }
+            // Wait for connection to fail
+            try await connection.waitForState(.closed)
             let state = await connection.state
-            #expect(state == .failed)
+            #expect(state == .closed)
             await connection.close()
         } catch {
             // Expected to fail
