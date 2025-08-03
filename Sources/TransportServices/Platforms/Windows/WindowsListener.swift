@@ -1,53 +1,57 @@
 //
-//  LinuxListener.swift
+//  WindowsListener.swift
 //  
 //
 //  Maximilian Alexander
 //
 
-#if os(Linux)
-#if canImport(Musl)
-import Musl
-#elseif canImport(Glibc)
-import Glibc
-#else
-#error("Unsupported C library")
-#endif
+#if os(Windows)
+import WinSDK
+import Foundation
 
-/// Linux platform-specific listener implementation using BSD sockets
-public final actor LinuxListener: Listener {
+/// Windows platform-specific listener implementation using Winsock2
+public final actor WindowsListener: Listener {
     public let preconnection: Preconnection
     public nonisolated let eventHandler: @Sendable (TransportServicesEvent) -> Void
     
-    private var listenSocketFd: Int32 = -1
+    private var listenSocket: SOCKET = INVALID_SOCKET
     public private(set) var state: ListenerState = .setup
     public private(set) var group: ConnectionGroup?
+    private var connectionLimit: UInt?
+    private var acceptedCount: UInt = 0
     
     public init(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
         self.preconnection = preconnection
         self.eventHandler = eventHandler
+        
+        // Initialize Winsock if not already done
+        WindowsCompat.initializeWinsock()
     }
     
     // MARK: - Listener Protocol Implementation
     
     public func listen() async throws {
         guard let localEndpoint = preconnection.localEndpoints.first else {
-            throw LinuxTransportError.noAddressSpecified
+            throw WindowsTransportError.noAddressSpecified
         }
         
         do {
             // Create socket based on transport properties
             let properties = preconnection.transportProperties
-            let socketType = properties.reliability == .require ? SOCK_STREAM : SOCK_DGRAM
-            let `protocol` = properties.reliability == .require ? IPPROTO_TCP : IPPROTO_UDP
+            let family = WindowsCompat.AF_INET // TODO: Support IPv6
+            let socketType = properties.reliability == .require ? WindowsCompat.SOCK_STREAM : WindowsCompat.SOCK_DGRAM
+            let proto = properties.reliability == .require ? WindowsCompat.IPPROTO_TCP : WindowsCompat.IPPROTO_UDP
             
-            listenSocketFd = socket(AF_INET, socketType, Int32(`protocol`))
-            guard listenSocketFd >= 0 else {
-                throw LinuxTransportError.socketCreationFailed(errno: errno)
+            guard let sock = WindowsCompat.socket(family: family, type: socketType, proto: proto) else {
+                throw WindowsTransportError.socketCreationFailed(WindowsCompat.getLastSocketError())
             }
             
+            self.listenSocket = sock
+            
             // Set socket to non-blocking mode
-            setNonBlocking(listenSocketFd)
+            guard WindowsCompat.setNonBlocking(listenSocket) else {
+                throw WindowsTransportError.socketCreationFailed(WindowsCompat.getLastSocketError())
+            }
             
             // Configure socket options
             configureSocketOptions()
@@ -58,14 +62,16 @@ public final actor LinuxListener: Listener {
             // Start listening (TCP only)
             if properties.reliability == .require {
                 let backlog: Int32 = 128
-                let result = Glibc.listen(listenSocketFd, backlog)
-                if result < 0 {
-                    throw LinuxTransportError.listenFailed(errno: errno)
+                let result = WinSDK.listen(listenSocket, backlog)
+                if result == SOCKET_ERROR {
+                    throw WindowsTransportError.listenFailed(WindowsCompat.getLastSocketError())
                 }
             }
             
-            // Register with event loop for accept events
-            registerWithEventLoop()
+            // Associate socket with IOCP
+            guard EventLoop.associateSocket(listenSocket) else {
+                throw WindowsTransportError.iocpError(GetLastError())
+            }
             
             state = .ready
             eventHandler(.listenerReady(self))
@@ -75,9 +81,9 @@ public final actor LinuxListener: Listener {
             
         } catch {
             state = .failed
-            if listenSocketFd >= 0 {
-                close(listenSocketFd)
-                listenSocketFd = -1
+            if listenSocket != INVALID_SOCKET {
+                closesocket(listenSocket)
+                listenSocket = INVALID_SOCKET
             }
             eventHandler(.listenerError(self, reason: error.localizedDescription))
             throw error
@@ -89,16 +95,28 @@ public final actor LinuxListener: Listener {
         
         state = .closed
         
-        if listenSocketFd >= 0 {
-            // Unregister from event loop
-            EventLoop.unregisterSocket(listenSocketFd)
-            
-            // Close the listening socket
-            close(listenSocketFd)
-            listenSocketFd = -1
+        if listenSocket != INVALID_SOCKET {
+            closesocket(listenSocket)
+            listenSocket = INVALID_SOCKET
         }
         
         eventHandler(.listenerClosed(self))
+    }
+    
+    public func setNewConnectionLimit(_ value: UInt?) {
+        self.connectionLimit = value
+    }
+    
+    public func getNewConnectionLimit() -> UInt? {
+        return connectionLimit
+    }
+    
+    public func getAcceptedConnectionCount() -> UInt {
+        return acceptedCount
+    }
+    
+    public func getProperties() -> TransportProperties {
+        return preconnection.transportProperties
     }
     
     public func newConnectionGroup() async -> ConnectionGroup {
@@ -109,69 +127,51 @@ public final actor LinuxListener: Listener {
     
     // MARK: - Private Helper Methods
     
-    private func setNonBlocking(_ fd: Int32) {
-        let flags = fcntl(fd, F_GETFL, 0)
-        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
-    }
-    
     private func configureSocketOptions() {
-        guard listenSocketFd >= 0 else { return }
+        guard listenSocket != INVALID_SOCKET else { return }
         
         // Enable SO_REUSEADDR to allow quick restart
-        var reuseAddr: Int32 = 1
-        setsockopt(listenSocketFd, SOL_SOCKET, SO_REUSEADDR, &reuseAddr, socklen_t(MemoryLayout<Int32>.size))
+        var reuseAddr: BOOL = TRUE
+        setsockopt(listenSocket, WindowsCompat.SOL_SOCKET, WindowsCompat.SO_REUSEADDR,
+                  &reuseAddr, Int32(MemoryLayout<BOOL>.size))
         
-        // Enable SO_REUSEPORT if available (for load balancing)
-        #if os(Linux)
-        var reusePort: Int32 = 1
-        setsockopt(listenSocketFd, SOL_SOCKET, SO_REUSEPORT, &reusePort, socklen_t(MemoryLayout<Int32>.size))
-        #endif
+        // Enable SO_EXCLUSIVEADDRUSE on Windows for security
+        var exclusive: BOOL = TRUE
+        setsockopt(listenSocket, WindowsCompat.SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                  &exclusive, Int32(MemoryLayout<BOOL>.size))
     }
     
     private func bindToLocalEndpoint(_ endpoint: LocalEndpoint) throws {
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        
         guard let port = endpoint.port else {
-            throw LinuxTransportError.missingPort
-        }
-        addr.sin_port = htons(port)
-        
-        if let ipAddress = endpoint.ipAddress {
-            // Parse IP address string
-            if inet_pton(AF_INET, ipAddress, &addr.sin_addr) != 1 {
-                throw LinuxTransportError.invalidAddress
-            }
-        } else {
-            // Bind to all interfaces
-            addr.sin_addr.s_addr = INADDR_ANY
+            throw WindowsTransportError.missingPort
         }
         
-        let result = withUnsafePointer(to: &addr) { ptr in
+        let addr = WindowsCompat.createSockaddrIn(
+            address: endpoint.ipAddress,
+            port: port
+        )
+        
+        var mutableAddr = addr
+        let result = withUnsafePointer(to: &mutableAddr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                bind(listenSocketFd, sockaddrPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+                bind(listenSocket, sockaddrPtr, Int32(MemoryLayout<sockaddr_in>.size))
             }
         }
         
-        if result < 0 {
-            throw LinuxTransportError.bindFailed(errno: errno)
-        }
-    }
-    
-    private func registerWithEventLoop() {
-        guard listenSocketFd >= 0 else { return }
-        
-        let events = UInt32(EPOLLIN | EPOLLET)
-        _ = EventLoop.registerSocket(listenSocketFd, events: events) { [weak self] in
-            Task {
-                await self?.handleAcceptEvent()
-            }
+        if result == SOCKET_ERROR {
+            throw WindowsTransportError.bindFailed(WindowsCompat.getLastSocketError())
         }
     }
     
     private func startAccepting() {
         Task {
             while state == .ready {
+                // Check connection limit
+                if let limit = connectionLimit, acceptedCount >= limit {
+                    try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                    continue
+                }
+                
                 await acceptConnections()
                 // Small delay to prevent busy loop
                 try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
@@ -180,7 +180,7 @@ public final actor LinuxListener: Listener {
     }
     
     private func acceptConnections() async {
-        guard listenSocketFd >= 0, state == .ready else { return }
+        guard listenSocket != INVALID_SOCKET, state == .ready else { return }
         
         let properties = preconnection.transportProperties
         
@@ -195,37 +195,38 @@ public final actor LinuxListener: Listener {
     
     private func acceptTCPConnection() async {
         var clientAddr = sockaddr_in()
-        var addrLen = socklen_t(MemoryLayout<sockaddr_in>.size)
+        var addrLen = Int32(MemoryLayout<sockaddr_in>.size)
         
-        let clientFd = withUnsafeMutablePointer(to: &clientAddr) { ptr in
+        var mutableAddr = clientAddr
+        let clientSocket = withUnsafeMutablePointer(to: &mutableAddr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                accept(listenSocketFd, sockaddrPtr, &addrLen)
+                accept(listenSocket, sockaddrPtr, &addrLen)
             }
         }
         
-        if clientFd < 0 {
-            if errno == EAGAIN || errno == EWOULDBLOCK {
+        if clientSocket == INVALID_SOCKET {
+            let error = WindowsCompat.getLastSocketError()
+            if error == WSAEWOULDBLOCK {
                 // No pending connections
                 return
             }
             // Log error but continue accepting
-            print("Accept error: \(String(cString: strerror(errno)))")
+            print("Accept error: \(WindowsCompat.errorString(error))")
             return
         }
         
         // Set non-blocking mode for client socket
-        let flags = fcntl(clientFd, F_GETFL, 0)
-        _ = fcntl(clientFd, F_SETFL, flags | O_NONBLOCK)
+        WindowsCompat.setNonBlocking(clientSocket)
         
         // Create remote endpoint from client address
-        let remoteEndpoint = createRemoteEndpoint(from: clientAddr)
+        let remoteEndpoint = createRemoteEndpoint(from: mutableAddr)
         
         // Create new preconnection for the accepted connection
         let newPreconnection = createAcceptedPreconnection(remoteEndpoint: remoteEndpoint)
         
-        // Create LinuxConnection for the accepted socket
-        let connection = LinuxAcceptedConnection(
-            socketFd: clientFd,
+        // Create WindowsConnection for the accepted socket
+        let connection = WindowsAcceptedConnection(
+            socket: clientSocket,
             preconnection: newPreconnection,
             eventHandler: eventHandler
         )
@@ -239,6 +240,9 @@ public final actor LinuxListener: Listener {
         // Initialize the connection
         await connection.markReady()
         
+        // Increment accepted count
+        acceptedCount += 1
+        
         // Notify about new connection
         eventHandler(.connectionReceived(self, connection))
     }
@@ -246,29 +250,26 @@ public final actor LinuxListener: Listener {
     private func handleUDPConnection() async {
         // For UDP, we don't actually accept connections
         // Instead, we could handle incoming datagrams and create virtual connections
-        // This is a simplified implementation
         
-        var buffer = Array<UInt8>(repeating: 0, count: 65536)
+        var buffer = Array<CChar>(repeating: 0, count: 65536)
         var clientAddr = sockaddr_in()
-        var addrLen = socklen_t(MemoryLayout<sockaddr_in>.size)
+        var addrLen = Int32(MemoryLayout<sockaddr_in>.size)
         
-        let bytesReceived = withUnsafeMutablePointer(to: &clientAddr) { addrPtr in
+        var mutableAddr = clientAddr
+        let bytesReceived = withUnsafeMutablePointer(to: &mutableAddr) { addrPtr in
             addrPtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                buffer.withUnsafeMutableBytes { bufferPtr in
-                    recvfrom(listenSocketFd, bufferPtr.baseAddress, bufferPtr.count,
-                            0, sockaddrPtr, &addrLen)
-                }
+                recvfrom(listenSocket, &buffer, Int32(buffer.count), 0, sockaddrPtr, &addrLen)
             }
         }
         
         if bytesReceived > 0 {
             // Create a virtual connection for this UDP peer
-            let remoteEndpoint = createRemoteEndpoint(from: clientAddr)
+            let remoteEndpoint = createRemoteEndpoint(from: mutableAddr)
             let newPreconnection = createAcceptedPreconnection(remoteEndpoint: remoteEndpoint)
             
-            let connection = LinuxUDPConnection(
-                listenSocketFd: listenSocketFd,
-                remoteAddr: clientAddr,
+            let connection = WindowsUDPConnection(
+                listenSocket: listenSocket,
+                remoteAddr: mutableAddr,
                 preconnection: newPreconnection,
                 eventHandler: eventHandler
             )
@@ -282,8 +283,10 @@ public final actor LinuxListener: Listener {
             await connection.markReady()
             
             // Store the initial data
-            let data = Data(buffer.prefix(bytesReceived))
+            let data = Data(bytes: buffer, count: Int(bytesReceived))
             await connection.storeInitialData(data)
+            
+            acceptedCount += 1
             
             eventHandler(.connectionReceived(self, connection))
         }
@@ -293,10 +296,9 @@ public final actor LinuxListener: Listener {
         let endpoint = RemoteEndpoint()
         
         // Convert IP address to string
-        var ipBuffer = Array<CChar>(repeating: 0, count: Int(INET_ADDRSTRLEN))
-        var mutableAddr = addr
-        inet_ntop(AF_INET, &mutableAddr.sin_addr, &ipBuffer, socklen_t(INET_ADDRSTRLEN))
-        endpoint.ipAddress = String(cString: ipBuffer)
+        if let ip = WindowsCompat.ipToString(family: WindowsCompat.AF_INET, addr: &addr.sin_addr) {
+            endpoint.ipAddress = ip
+        }
         
         // Convert port
         endpoint.port = ntohs(addr.sin_port)
@@ -307,67 +309,58 @@ public final actor LinuxListener: Listener {
     private func createAcceptedPreconnection(remoteEndpoint: RemoteEndpoint) -> Preconnection {
         // Create a new preconnection based on the listener's preconnection
         // but with the specific remote endpoint
-        let newPreconnection = preconnection.clone()
-        newPreconnection.remoteEndpoints = [remoteEndpoint]
-        return newPreconnection
-    }
-    
-    private func handleAcceptEvent() {
-        // Called by event loop when socket is ready for accept
-        Task {
-            await acceptConnections()
+        if let windowsPreconnection = preconnection as? WindowsPreconnection {
+            let newPreconnection = windowsPreconnection.clone()
+            newPreconnection.remoteEndpoints = [remoteEndpoint]
+            return newPreconnection
+        } else {
+            // Fallback - create new WindowsPreconnection
+            return WindowsPreconnection(
+                localEndpoints: preconnection.localEndpoints,
+                remoteEndpoints: [remoteEndpoint],
+                transportProperties: preconnection.transportProperties,
+                securityParameters: preconnection.securityParameters
+            )
         }
     }
 }
 
 /// Special connection class for accepted TCP connections
-private actor LinuxAcceptedConnection: LinuxConnection {
-    private let acceptedSocketFd: Int32
+private actor WindowsAcceptedConnection: WindowsConnection {
+    private let acceptedSocket: SOCKET
     
-    init(socketFd: Int32, preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
-        self.acceptedSocketFd = socketFd
+    init(socket: SOCKET, preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
+        self.acceptedSocket = socket
         super.init(preconnection: preconnection, eventHandler: eventHandler)
     }
     
     func markReady() {
-        self.socketFd = acceptedSocketFd
+        self.socket = acceptedSocket
         self.state = .established
         
-        // Register with event loop
-        registerWithEventLoop()
+        // Associate with IOCP
+        _ = EventLoop.associateSocket(socket)
         
         // Notify ready
         eventHandler(.ready(self))
     }
-    
-    private func registerWithEventLoop() {
-        guard socketFd >= 0 else { return }
-        
-        let events = UInt32(EPOLLIN | EPOLLOUT | EPOLLET)
-        _ = EventLoop.registerSocket(socketFd, events: events) { [weak self] in
-            Task {
-                // Handle socket events
-                _ = self
-            }
-        }
-    }
 }
 
 /// Special connection class for UDP virtual connections
-private actor LinuxUDPConnection: LinuxConnection {
-    private let sharedSocketFd: Int32
+private actor WindowsUDPConnection: WindowsConnection {
+    private let sharedSocket: SOCKET
     private let remoteAddress: sockaddr_in
     private var initialData: Data?
     
-    init(listenSocketFd: Int32, remoteAddr: sockaddr_in, preconnection: Preconnection, 
+    init(listenSocket: SOCKET, remoteAddr: sockaddr_in, preconnection: Preconnection, 
          eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
-        self.sharedSocketFd = listenSocketFd
+        self.sharedSocket = listenSocket
         self.remoteAddress = remoteAddr
         super.init(preconnection: preconnection, eventHandler: eventHandler)
     }
     
     func markReady() {
-        self.socketFd = sharedSocketFd
+        self.socket = sharedSocket
         self.state = .established
         eventHandler(.ready(self))
     }
@@ -385,14 +378,14 @@ private actor LinuxUDPConnection: LinuxConnection {
         let result = data.withUnsafeBytes { buffer in
             withUnsafePointer(to: &addr) { addrPtr in
                 addrPtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                    sendto(sharedSocketFd, buffer.baseAddress, buffer.count,
-                          Int32(MSG_NOSIGNAL), sockaddrPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+                    sendto(sharedSocket, buffer.bindMemory(to: CChar.self).baseAddress,
+                          Int32(buffer.count), 0, sockaddrPtr, Int32(MemoryLayout<sockaddr_in>.size))
                 }
             }
         }
         
-        if result < 0 {
-            throw LinuxTransportError.sendFailed(errno: errno)
+        if result == SOCKET_ERROR {
+            throw WindowsTransportError.sendFailed(WindowsCompat.getLastSocketError())
         }
         
         eventHandler(.sent(self, context))
@@ -412,7 +405,7 @@ private actor LinuxUDPConnection: LinuxConnection {
     }
 }
 
-/// Listener state enumeration (Linux-specific)
+/// Listener state enumeration (Windows-specific)
 internal enum ListenerState: Sendable {
     case setup
     case ready
@@ -420,11 +413,9 @@ internal enum ListenerState: Sendable {
     case closed
 }
 
-// Extend the error enum
-extension LinuxTransportError {
-    static func listenFailed(errno: Int32) -> LinuxTransportError {
-        .connectFailed(errno: errno) // Reuse for simplicity
-    }
-}
+// Windows-specific constants
+private let WSAEWOULDBLOCK = Int32(10035)
+private let SO_EXCLUSIVEADDRUSE = Int32(0xfffffffb)
+private let TRUE = BOOL(1)
 
 #endif

@@ -236,11 +236,168 @@ private final class Atomic<T>: @unchecked Sendable {
     }
 }
 #elseif os(Windows)
-internal final class EventLoop {
-    // Placeholder for IOCP implementation
-    public static func execute(_ block: @escaping () -> Void) {
-        // For now, just execute the block directly
-        block()
+import WinSDK
+import Foundation
+
+/// Windows EventLoop implementation using I/O Completion Ports (IOCP)
+internal final class EventLoop: @unchecked Sendable {
+    private static let singleton = EventLoop()
+    
+    private let iocpHandle: HANDLE
+    private let running = Atomic<Bool>(true)
+    private let thread: Thread
+    private let pendingTasks = Atomic<[() -> Void]>([])
+    
+    // Custom completion key for task notifications
+    private static let TASK_NOTIFICATION_KEY: ULONG_PTR = 1
+    
+    private init() {
+        // Create I/O Completion Port
+        self.iocpHandle = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nil, 0, 0)
+        guard self.iocpHandle != nil && self.iocpHandle != INVALID_HANDLE_VALUE else {
+            fatalError("Failed to create IOCP: \(GetLastError())")
+        }
+        
+        // Start event loop thread
+        self.thread = Thread { [weak self] in
+            self?.run()
+        }
+        self.thread.start()
+    }
+    
+    deinit {
+        running.store(false)
+        
+        // Post a completion status to wake up the event loop
+        PostQueuedCompletionStatus(iocpHandle, 0, 0, nil)
+        
+        // Close IOCP handle
+        CloseHandle(iocpHandle)
+    }
+    
+    private func run() {
+        var bytesTransferred: DWORD = 0
+        var completionKey: ULONG_PTR = 0
+        var overlapped: LPOVERLAPPED? = nil
+        
+        while running.load() {
+            // Wait for completion status
+            let result = GetQueuedCompletionStatus(
+                iocpHandle,
+                &bytesTransferred,
+                &completionKey,
+                &overlapped,
+                INFINITE
+            )
+            
+            if result == FALSE {
+                let error = GetLastError()
+                if error == ERROR_ABANDONED_WAIT_0 {
+                    // IOCP handle was closed
+                    break
+                }
+                print("GetQueuedCompletionStatus error: \(error)")
+                continue
+            }
+            
+            // Check if this is a task notification
+            if completionKey == Self.TASK_NOTIFICATION_KEY {
+                handleTaskNotification()
+            } else if let overlapped = overlapped {
+                // Handle I/O completion
+                handleIOCompletion(overlapped: overlapped, bytesTransferred: bytesTransferred)
+            }
+        }
+    }
+    
+    private func handleTaskNotification() {
+        // Execute pending tasks
+        let tasks = pendingTasks.exchange([])
+        for task in tasks {
+            task()
+        }
+    }
+    
+    private func handleIOCompletion(overlapped: LPOVERLAPPED, bytesTransferred: DWORD) {
+        // This will be implemented when we add socket support
+        // The overlapped structure will contain context for the I/O operation
+    }
+    
+    /// Execute a block asynchronously on the event loop
+    public static func execute(_ block: @escaping @Sendable () -> Void) {
+        singleton.pendingTasks.update { tasks in
+            tasks.append(block)
+        }
+        
+        // Post completion status to wake up the event loop
+        PostQueuedCompletionStatus(
+            singleton.iocpHandle,
+            0,
+            TASK_NOTIFICATION_KEY,
+            nil
+        )
+    }
+    
+    /// Associate a socket with the IOCP
+    internal static func associateSocket(_ socket: SOCKET) -> Bool {
+        let result = CreateIoCompletionPort(
+            HANDLE(socket),
+            singleton.iocpHandle,
+            ULONG_PTR(socket),
+            0
+        )
+        return result != nil && result != INVALID_HANDLE_VALUE
+    }
+    
+    /// Post an I/O completion
+    internal static func postCompletion(socket: SOCKET, overlapped: LPOVERLAPPED, bytes: DWORD = 0) {
+        PostQueuedCompletionStatus(
+            singleton.iocpHandle,
+            bytes,
+            ULONG_PTR(socket),
+            overlapped
+        )
+    }
+}
+
+/// Simple atomic wrapper for thread-safe operations (Windows version)
+private final class Atomic<T>: @unchecked Sendable {
+    private var value: T
+    private var criticalSection = CRITICAL_SECTION()
+    
+    init(_ value: T) {
+        self.value = value
+        InitializeCriticalSection(&criticalSection)
+    }
+    
+    deinit {
+        DeleteCriticalSection(&criticalSection)
+    }
+    
+    func load() -> T {
+        EnterCriticalSection(&criticalSection)
+        defer { LeaveCriticalSection(&criticalSection) }
+        return value
+    }
+    
+    func store(_ newValue: T) {
+        EnterCriticalSection(&criticalSection)
+        defer { LeaveCriticalSection(&criticalSection) }
+        value = newValue
+    }
+    
+    func exchange(_ newValue: T) -> T {
+        EnterCriticalSection(&criticalSection)
+        defer { LeaveCriticalSection(&criticalSection) }
+        let oldValue = value
+        value = newValue
+        return oldValue
+    }
+    
+    func update(_ transform: (inout T) -> Void) {
+        EnterCriticalSection(&criticalSection)
+        defer { LeaveCriticalSection(&criticalSection) }
+        transform(&value)
     }
 }
 #endif

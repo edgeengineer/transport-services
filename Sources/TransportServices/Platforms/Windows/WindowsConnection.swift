@@ -1,0 +1,452 @@
+//
+//  WindowsConnection.swift
+//  
+//
+//  Maximilian Alexander
+//
+
+#if os(Windows)
+import WinSDK
+import Foundation
+
+/// Windows platform-specific connection implementation using Winsock2 and IOCP
+public final actor WindowsConnection: Connection {
+    public let preconnection: Preconnection
+    public nonisolated let eventHandler: @Sendable (TransportServicesEvent) -> Void
+    
+    internal var socket: SOCKET = INVALID_SOCKET
+    public internal(set) var state: ConnectionState = .establishing
+    public private(set) var group: ConnectionGroup?
+    public private(set) var properties: TransportProperties
+    
+    // IOCP-specific data
+    private var sendOverlapped: WSAOVERLAPPED?
+    private var recvOverlapped: WSAOVERLAPPED?
+    private var receiveBuffer = Data()
+    private let maxBufferSize = 65536
+    
+    public init(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
+        self.preconnection = preconnection
+        self.eventHandler = eventHandler
+        self.properties = preconnection.transportProperties
+        
+        // Initialize Winsock if not already done
+        WindowsCompat.initializeWinsock()
+    }
+    
+    // MARK: - Connection Protocol Implementation
+    
+    public func setGroup(_ group: ConnectionGroup?) {
+        self.group = group
+    }
+    
+    // MARK: - Connection Lifecycle
+    
+    /// Initiate the connection
+    public func initiate() async {
+        guard let remoteEndpoint = preconnection.remoteEndpoints.first else {
+            eventHandler(.establishmentError(self, reason: "No remote endpoint specified"))
+            return
+        }
+        
+        do {
+            // Create socket based on transport properties
+            let family = WindowsCompat.AF_INET // TODO: Support IPv6
+            let socketType = properties.reliability == .require ? WindowsCompat.SOCK_STREAM : WindowsCompat.SOCK_DGRAM
+            let proto = properties.reliability == .require ? WindowsCompat.IPPROTO_TCP : WindowsCompat.IPPROTO_UDP
+            
+            guard let sock = WindowsCompat.socket(family: family, type: socketType, proto: proto) else {
+                throw WindowsTransportError.socketCreationFailed(WindowsCompat.getLastSocketError())
+            }
+            
+            self.socket = sock
+            
+            // Set socket to non-blocking mode
+            guard WindowsCompat.setNonBlocking(socket) else {
+                throw WindowsTransportError.socketCreationFailed(WindowsCompat.getLastSocketError())
+            }
+            
+            // Configure socket options
+            configureSocketOptions()
+            
+            // Bind to local endpoint if specified
+            if let localEndpoint = preconnection.localEndpoints.first {
+                try bindToLocalEndpoint(localEndpoint)
+            }
+            
+            // Associate socket with IOCP
+            guard EventLoop.associateSocket(socket) else {
+                throw WindowsTransportError.iocpError(GetLastError())
+            }
+            
+            // Connect to remote endpoint
+            try await connectToRemoteEndpoint(remoteEndpoint)
+            
+            state = .established
+            eventHandler(.ready(self))
+            
+        } catch {
+            state = .closed
+            if socket != INVALID_SOCKET {
+                closesocket(socket)
+                socket = INVALID_SOCKET
+            }
+            eventHandler(.establishmentError(self, reason: error.localizedDescription))
+        }
+    }
+    
+    public func close() async {
+        guard state != .closed else { return }
+        
+        state = .closing
+        
+        if socket != INVALID_SOCKET {
+            // Graceful shutdown for TCP
+            if properties.reliability == .require {
+                shutdown(socket, WindowsCompat.SD_BOTH)
+            }
+            
+            closesocket(socket)
+            socket = INVALID_SOCKET
+        }
+        
+        state = .closed
+        eventHandler(.closed(self))
+    }
+    
+    nonisolated public func abort() {
+        Task {
+            await self.abortInternal()
+        }
+    }
+    
+    private func abortInternal() {
+        guard state != .closed else { return }
+        
+        state = .closed
+        
+        if socket != INVALID_SOCKET {
+            closesocket(socket)
+            socket = INVALID_SOCKET
+        }
+        
+        eventHandler(.connectionError(self, reason: "Connection aborted"))
+    }
+    
+    public func clone() async throws -> any Connection {
+        let newConnection = WindowsConnection(
+            preconnection: preconnection,
+            eventHandler: eventHandler
+        )
+        
+        if let group = self.group {
+            await group.addConnection(newConnection)
+            await newConnection.setGroup(group)
+        }
+        
+        await newConnection.initiate()
+        
+        return newConnection
+    }
+    
+    // MARK: - Data Transfer
+    
+    public func send(data: Data, context: MessageContext, endOfMessage: Bool) async throws {
+        guard state == .established else {
+            throw TransportServicesError.connectionClosed
+        }
+        
+        guard socket != INVALID_SOCKET else {
+            throw TransportServicesError.connectionClosed
+        }
+        
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            data.withUnsafeBytes { buffer in
+                let result = WinSDK.send(
+                    socket,
+                    buffer.bindMemory(to: CChar.self).baseAddress,
+                    Int32(buffer.count),
+                    0
+                )
+                
+                if result == SOCKET_ERROR {
+                    let error = WindowsCompat.getLastSocketError()
+                    if error == WSAEWOULDBLOCK {
+                        // Would block, need to use overlapped I/O
+                        Task {
+                            do {
+                                try await sendOverlapped(data: data)
+                                continuation.resume()
+                            } catch {
+                                continuation.resume(throwing: error)
+                            }
+                        }
+                    } else {
+                        continuation.resume(throwing: WindowsTransportError.sendFailed(error))
+                    }
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+        
+        eventHandler(.sent(self, context))
+    }
+    
+    public func receive(minIncompleteLength: Int?, maxLength: Int?) async throws -> (Data, MessageContext) {
+        guard state == .established else {
+            throw TransportServicesError.connectionClosed
+        }
+        
+        guard socket != INVALID_SOCKET else {
+            throw TransportServicesError.connectionClosed
+        }
+        
+        let bufferSize = min(maxLength ?? maxBufferSize, maxBufferSize)
+        var buffer = Array<CChar>(repeating: 0, count: bufferSize)
+        
+        let result = recv(socket, &buffer, Int32(bufferSize), 0)
+        
+        if result == SOCKET_ERROR {
+            let error = WindowsCompat.getLastSocketError()
+            if error == WSAEWOULDBLOCK {
+                // Would block, need to use overlapped I/O
+                return try await receiveOverlapped(bufferSize: bufferSize)
+            } else {
+                throw WindowsTransportError.receiveFailed(error)
+            }
+        } else if result == 0 {
+            // Connection closed by peer
+            await close()
+            throw TransportServicesError.connectionClosed
+        }
+        
+        let data = Data(bytes: buffer, count: Int(result))
+        let context = MessageContext()
+        
+        eventHandler(.received(self, data, context))
+        
+        return (data, context)
+    }
+    
+    public func startReceiving(minIncompleteLength: Int?, maxLength: Int?) {
+        Task {
+            while state == .established {
+                do {
+                    let _ = try await receive(
+                        minIncompleteLength: minIncompleteLength,
+                        maxLength: maxLength
+                    )
+                } catch {
+                    // Connection closed or error occurred
+                    break
+                }
+            }
+        }
+    }
+    
+    // MARK: - Endpoint Management
+    
+    public func addRemote(_ remoteEndpoints: [RemoteEndpoint]) {
+        // Not implemented for basic Windows sockets
+    }
+    
+    public func removeRemote(_ remoteEndpoints: [RemoteEndpoint]) {
+        // Not implemented for basic Windows sockets
+    }
+    
+    public func addLocal(_ localEndpoints: [LocalEndpoint]) {
+        // Not implemented for basic Windows sockets
+    }
+    
+    public func removeLocal(_ localEndpoints: [LocalEndpoint]) {
+        // Not implemented for basic Windows sockets
+    }
+    
+    // MARK: - Private Helper Methods
+    
+    private func configureSocketOptions() {
+        guard socket != INVALID_SOCKET else { return }
+        
+        // Enable SO_REUSEADDR
+        var reuseAddr: BOOL = TRUE
+        setsockopt(socket, WindowsCompat.SOL_SOCKET, WindowsCompat.SO_REUSEADDR,
+                  &reuseAddr, Int32(MemoryLayout<BOOL>.size))
+        
+        // Configure keep-alive if requested
+        if properties.keepAlive != .prohibit {
+            var keepAlive: BOOL = TRUE
+            setsockopt(socket, WindowsCompat.SOL_SOCKET, WindowsCompat.SO_KEEPALIVE,
+                      &keepAlive, Int32(MemoryLayout<BOOL>.size))
+        }
+        
+        // Configure TCP nodelay for low latency
+        if properties.reliability == .require {
+            var nodelay: BOOL = TRUE
+            setsockopt(socket, IPPROTO_TCP, WindowsCompat.TCP_NODELAY,
+                      &nodelay, Int32(MemoryLayout<BOOL>.size))
+        }
+    }
+    
+    private func bindToLocalEndpoint(_ endpoint: LocalEndpoint) throws {
+        let addr = WindowsCompat.createSockaddrIn(
+            address: endpoint.ipAddress,
+            port: endpoint.port ?? 0
+        )
+        
+        var mutableAddr = addr
+        let result = withUnsafePointer(to: &mutableAddr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
+                bind(socket, sockaddrPtr, Int32(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        
+        if result == SOCKET_ERROR {
+            throw WindowsTransportError.bindFailed(WindowsCompat.getLastSocketError())
+        }
+    }
+    
+    private func connectToRemoteEndpoint(_ endpoint: RemoteEndpoint) async throws {
+        guard let port = endpoint.port else {
+            throw WindowsTransportError.missingPort
+        }
+        
+        // Resolve hostname if needed
+        let address: String
+        if let hostName = endpoint.hostName {
+            let addresses = try await WindowsCompat.resolveHostname(hostName)
+            guard let firstAddress = addresses.first else {
+                throw WindowsTransportError.resolutionFailed(0)
+            }
+            address = firstAddress
+        } else if let ipAddress = endpoint.ipAddress {
+            address = ipAddress
+        } else {
+            throw WindowsTransportError.noAddressSpecified
+        }
+        
+        let addr = WindowsCompat.createSockaddrIn(address: address, port: port)
+        
+        var mutableAddr = addr
+        let result = withUnsafePointer(to: &mutableAddr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
+                connect(socket, sockaddrPtr, Int32(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        
+        if result == SOCKET_ERROR {
+            let error = WindowsCompat.getLastSocketError()
+            if error != WSAEWOULDBLOCK {
+                throw WindowsTransportError.connectFailed(error)
+            }
+            // Connection in progress, wait for completion
+            try await waitForConnection()
+        }
+    }
+    
+    private func waitForConnection() async throws {
+        // Use select or WSAPoll to wait for connection completion
+        // This is simplified - actual implementation would integrate with IOCP
+        try await Task.sleep(nanoseconds: 100_000_000) // 100ms
+        
+        // Check socket error status
+        var error: Int32 = 0
+        var len = Int32(MemoryLayout<Int32>.size)
+        let result = getsockopt(socket, WindowsCompat.SOL_SOCKET, WindowsCompat.SO_ERROR,
+                               &error, &len)
+        
+        if result == SOCKET_ERROR || error != 0 {
+            throw WindowsTransportError.connectFailed(error)
+        }
+    }
+    
+    private func sendOverlapped(data: Data) async throws {
+        // Implement overlapped send using IOCP
+        // This is a simplified version
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            // Create WSABUF
+            var wsaBuf = WSABUF()
+            data.withUnsafeBytes { buffer in
+                wsaBuf.len = ULONG(buffer.count)
+                wsaBuf.buf = UnsafeMutablePointer(mutating: buffer.bindMemory(to: CChar.self).baseAddress)
+                
+                // Create overlapped structure
+                var overlapped = WSAOVERLAPPED()
+                var bytesSent: DWORD = 0
+                
+                let result = WSASend(
+                    socket,
+                    &wsaBuf,
+                    1,
+                    &bytesSent,
+                    0,
+                    &overlapped,
+                    nil
+                )
+                
+                if result == SOCKET_ERROR {
+                    let error = WindowsCompat.getLastSocketError()
+                    if error == WSA_IO_PENDING {
+                        // I/O pending, will complete later
+                        continuation.resume()
+                    } else {
+                        continuation.resume(throwing: WindowsTransportError.sendFailed(error))
+                    }
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+    
+    private func receiveOverlapped(bufferSize: Int) async throws -> (Data, MessageContext) {
+        try await withCheckedThrowingContinuation { continuation in
+            var buffer = Array<CChar>(repeating: 0, count: bufferSize)
+            var wsaBuf = WSABUF()
+            wsaBuf.len = ULONG(bufferSize)
+            wsaBuf.buf = &buffer
+            
+            var overlapped = WSAOVERLAPPED()
+            var bytesReceived: DWORD = 0
+            var flags: DWORD = 0
+            
+            let result = WSARecv(
+                socket,
+                &wsaBuf,
+                1,
+                &bytesReceived,
+                &flags,
+                &overlapped,
+                nil
+            )
+            
+            if result == SOCKET_ERROR {
+                let error = WindowsCompat.getLastSocketError()
+                if error == WSA_IO_PENDING {
+                    // I/O pending, will complete later
+                    // In a real implementation, we'd wait for IOCP notification
+                    Task {
+                        try await Task.sleep(nanoseconds: 10_000_000) // 10ms
+                        let data = Data(bytes: buffer, count: Int(bytesReceived))
+                        let context = MessageContext()
+                        continuation.resume(returning: (data, context))
+                    }
+                } else {
+                    continuation.resume(throwing: WindowsTransportError.receiveFailed(error))
+                }
+            } else {
+                let data = Data(bytes: buffer, count: Int(bytesReceived))
+                let context = MessageContext()
+                continuation.resume(returning: (data, context))
+            }
+        }
+    }
+}
+
+// Windows-specific constants
+private let WSAEWOULDBLOCK = Int32(10035)
+private let WSA_IO_PENDING = Int32(997)
+private let TRUE = BOOL(1)
+private let FALSE = BOOL(0)
+
+#endif
