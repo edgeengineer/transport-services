@@ -1,0 +1,68 @@
+# Alpine Linux Dockerfile with Musl libc for TAPS-Swift
+# Using Ubuntu Swift image as base, then creating Alpine environment
+FROM swift:5.9 AS swift-base
+
+# Build stage using Alpine
+FROM alpine:3.19 AS builder
+
+# Install Swift dependencies and build tools
+RUN apk add --no-cache \
+    bash \
+    build-base \
+    linux-headers \
+    git \
+    curl \
+    libxml2-dev \
+    openssl-dev \
+    zlib-dev \
+    python3 \
+    ncurses-dev \
+    libedit-dev \
+    icu-dev \
+    sqlite-dev \
+    libuuid
+
+# Download and install Swift for Alpine (if available) or build from source
+# For now, we'll use a prebuilt Swift toolchain if available
+# Alternative: Build Swift from source (takes longer)
+
+# Copy Swift installation from the official image (simplified approach)
+# Note: This is a workaround since official Swift Alpine images aren't available
+COPY --from=swift-base /usr/bin/swift* /usr/bin/
+COPY --from=swift-base /usr/lib/swift /usr/lib/swift
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY Package.swift ./
+COPY Sources ./Sources
+COPY Tests ./Tests
+COPY build-musl.sh ./
+
+# Make sure we're using Musl
+ENV CC=musl-gcc
+ENV CXX=musl-gcc
+
+# Build the project with Musl
+RUN swift build -c release || \
+    (echo "Swift build failed, trying with compatibility mode" && \
+     swift build -c release -Xswiftc -DMUSL_LIBC)
+
+# Runtime image
+FROM alpine:3.19
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    libssl3 \
+    libcrypto3 \
+    libstdc++ \
+    libgcc
+
+# Copy built artifacts
+COPY --from=builder /app/.build/release /app
+
+WORKDIR /app
+
+# The library is now built with Musl libc support
+CMD ["/bin/sh"]

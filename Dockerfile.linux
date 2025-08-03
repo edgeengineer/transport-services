@@ -1,0 +1,48 @@
+# Linux Dockerfile for TAPS-Swift
+# This uses the official Swift image (Ubuntu-based with Glibc)
+# For true Musl support, you'd need to build Swift from source on Alpine
+
+FROM swift:latest AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libssl-dev \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY Package.swift ./
+COPY Sources ./Sources
+COPY Tests ./Tests
+
+# Build the project
+RUN swift build -c release
+
+# Run tests
+RUN swift test
+
+# Runtime image
+FROM ubuntu:22.04
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    libicu70 \
+    libxml2 \
+    libcurl4 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Swift runtime libraries
+COPY --from=builder /usr/lib/swift/linux/*.so* /usr/lib/
+
+# Copy built artifacts
+COPY --from=builder /app/.build/release /app
+
+WORKDIR /app
+
+# The library is now built and ready
+CMD ["/bin/bash"]
