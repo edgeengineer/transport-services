@@ -22,14 +22,14 @@ public final actor AppleConnection: Connection {
     public nonisolated let eventHandler: @Sendable (TransportServicesEvent) -> Void
     
     private let nwConnection: NWConnection
-    private var _state: ConnectionState = .establishing
-    private var _group: ConnectionGroup?
-    private var _properties: TransportProperties
+    public private(set) var state: ConnectionState = .establishing
+    public private(set) var group: ConnectionGroup?
+    public private(set) var properties: TransportProperties
     
     public init(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
         self.preconnection = preconnection
         self.eventHandler = eventHandler
-        self._properties = preconnection.transportProperties
+        self.properties = preconnection.transportProperties
         
         // Create NWParameters based on preconnection properties
         let parameters = AppleConnection.createParameters(from: preconnection)
@@ -47,25 +47,15 @@ public final actor AppleConnection: Connection {
         self.nwConnection = nwConnection
         self.preconnection = preconnection
         self.eventHandler = eventHandler
-        self._properties = preconnection.transportProperties
+        self.properties = preconnection.transportProperties
     }
     
     // MARK: - Connection Protocol Implementation
     
-    public var state: ConnectionState {
-        _state
-    }
-    
-    public var properties: TransportProperties {
-        _properties
-    }
-    
-    public var group: ConnectionGroup? {
-        _group
-    }
+
     
     public func setGroup(_ group: ConnectionGroup?) {
-        _group = group
+        self.group = group
     }
     
     // MARK: - Connection Lifecycle
@@ -80,7 +70,7 @@ public final actor AppleConnection: Connection {
     }
     
     public func close() async {
-        _state = .closing
+        state = .closing
         let handler = eventHandler
         Task.detached {
             handler(.closed(self))
@@ -106,10 +96,10 @@ public final actor AppleConnection: Connection {
         )
         
         // Copy connection group membership
-        if let group = _group {
-            await group.addConnection(newConnection)
-            await newConnection.setGroup(group)
-        }
+                 if let group = self.group {
+             await group.addConnection(newConnection)
+             await newConnection.setGroup(group)
+         }
         
         // Initiate the cloned connection
         await newConnection.initiate()
@@ -210,27 +200,27 @@ public final actor AppleConnection: Connection {
     private func handleStateUpdate(_ newState: NWConnection.State) async {
         switch newState {
         case .ready:
-            self._state = .established
+            self.state = .established
             eventHandler(.ready(self))
         case .failed(let error):
-            self._state = .closed
+            self.state = .closed
             eventHandler(.connectionError(self, reason: error.localizedDescription))
         case .cancelled:
-            self._state = .closed
+            self.state = .closed
             eventHandler(.closed(self))
         case .waiting(let error):
             eventHandler(.connectionError(self, reason: error.localizedDescription))
         case .preparing:
-            self._state = .establishing
+                         self.state = .establishing
         case .setup:
-            self._state = .establishing
+                         self.state = .establishing
         @unknown default:
             break
         }
     }
     
     private func markAborted() {
-        _state = .closed
+        state = .closed
         eventHandler(.connectionError(self, reason: "Connection aborted"))
     }
     

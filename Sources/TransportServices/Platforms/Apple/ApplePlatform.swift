@@ -206,33 +206,4 @@ public struct ApplePlatform: Platform {
 }
 
 
-#else
-
-/// Stub implementation for non-Apple platforms
-public struct ApplePlatform: Platform {
-    public init() {}
-    
-    public func createConnection(preconnection: any Preconnection, 
-                               eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any Connection {
-        return AppleConnection(preconnection: preconnection, eventHandler: eventHandler)
-    }
-    
-    public func createListener(preconnection: Preconnection, 
-                             eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any PlatformListener {
-        return AppleListener()
-    }
-    
-    public func gatherCandidates(preconnection: any Preconnection) async throws -> CandidateSet {
-        throw TransportServicesError.notSupported("Apple Network.framework not available")
-    }
-    
-    public func isProtocolStackSupported(_ stack: ProtocolStack) -> Bool {
-        false
-    }
-    
-    public func getAvailableInterfaces() async throws -> [NetworkInterface] {
-        throw TransportServicesError.notSupported("Apple Network.framework not available")
-    }
-}
-
 #endif
