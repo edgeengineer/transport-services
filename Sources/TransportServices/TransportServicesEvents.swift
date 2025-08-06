@@ -1,5 +1,5 @@
 //
-//  TapsEvents.swift
+//  TransportServicesEvents.swift
 //  
 //
 //  Maximilian Alexander
@@ -15,20 +15,20 @@ import Foundation
 #endif
 
 public enum TransportServicesEvent: Sendable {
-    case ready(Connection)
-    case connectionReceived(Listener, Connection)
-    case rendezvousDone(Preconnection, Connection)
+    case ready(any Connection)
+    case connectionReceived(any Listener, any Connection)
+    case rendezvousDone(Preconnection, any Connection)
     case establishmentError(reason: String?)
-    case connectionError(Connection, reason: String?)
-    case closed(Connection)
-    case stopped(Listener)
-    case sent(Connection, MessageContext)
-    case expired(Connection, MessageContext)
-    case sendError(Connection, MessageContext, reason: String?)
-    case received(Connection, Data, MessageContext)
-    case receivedPartial(Connection, Data, MessageContext, endOfMessage: Bool)
-    case receiveError(Connection, MessageContext, reason: String?)
-    case softError(Connection, reason: String?)
-    case pathChange(Connection)
-    case cloneError(Connection, reason: String?)
+    case connectionError(any Connection, reason: String?)
+    case closed(any Connection)
+    case stopped(any Listener)
+    case sent(any Connection, MessageContext)
+    case expired(any Connection, MessageContext)
+    case sendError(any Connection, MessageContext, reason: String?)
+    case received(any Connection, Data, MessageContext)
+    case receivedPartial(any Connection, Data, MessageContext, endOfMessage: Bool)
+    case receiveError(any Connection, MessageContext, reason: String?)
+    case softError(any Connection, reason: String?)
+    case pathChange(any Connection)
+    case cloneError(any Connection, reason: String?)
 }

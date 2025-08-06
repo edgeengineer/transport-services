@@ -5,7 +5,7 @@
 //  Event loop implementation for Apple platforms using Grand Central Dispatch
 //
 
-#if canImport(Dispatch)
+#if canImport(Dispatch) && (os(macOS) || os(iOS) || os(tvOS) || os(watchOS))
 import Dispatch
 
 /// Apple platform EventLoop implementation using Grand Central Dispatch
@@ -32,7 +32,7 @@ internal final class AppleEventLoop: @unchecked Sendable {
     }
     
     /// Create a dispatch source for monitoring file descriptors (if needed for future use)
-    func monitorFileDescriptor(_ fd: Int32, events: DispatchSource.FileSystemEvent, handler: @escaping () -> Void) -> DispatchSourceFileSystemObject {
+    func monitorFileDescriptor(_ fd: Int32, events: DispatchSource.FileSystemEvent, handler: @escaping () -> Void) -> DispatchSource {
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd,
             eventMask: events,

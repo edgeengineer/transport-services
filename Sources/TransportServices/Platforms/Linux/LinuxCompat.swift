@@ -27,9 +27,9 @@ internal struct LinuxCompat {
     static let SOCK_NONBLOCK = Int32(2048)
     static let SOCK_CLOEXEC = Int32(524288)
     #else
-    // Use standard Glibc constants
-    static let SOCK_STREAM = Int32(Glibc.SOCK_STREAM)
-    static let SOCK_DGRAM = Int32(Glibc.SOCK_DGRAM)
+    // Use raw values for Glibc - these are standard on Linux
+    static let SOCK_STREAM = Int32(1)
+    static let SOCK_DGRAM = Int32(2)
     static let SOCK_NONBLOCK = Int32(2048)  // O_NONBLOCK equivalent for sockets
     static let SOCK_CLOEXEC = Int32(524288) // FD_CLOEXEC equivalent for sockets
     #endif
@@ -48,16 +48,16 @@ internal struct LinuxCompat {
     static let EPOLL_CTL_DEL = Int32(2)
     static let EPOLL_CTL_MOD = Int32(3)
     #else
-    // Use standard Glibc constants
-    static let EPOLL_CLOEXEC = Int32(Glibc.EPOLL_CLOEXEC)
-    static let EPOLLIN = UInt32(Glibc.EPOLLIN)
-    static let EPOLLOUT = UInt32(Glibc.EPOLLOUT)
-    static let EPOLLERR = UInt32(Glibc.EPOLLERR)
-    static let EPOLLHUP = UInt32(Glibc.EPOLLHUP)
-    static let EPOLLET = UInt32(Glibc.EPOLLET)
-    static let EPOLL_CTL_ADD = Int32(Glibc.EPOLL_CTL_ADD)
-    static let EPOLL_CTL_DEL = Int32(Glibc.EPOLL_CTL_DEL)
-    static let EPOLL_CTL_MOD = Int32(Glibc.EPOLL_CTL_MOD)
+    // Use raw values for Glibc - these are standard on Linux
+    static let EPOLL_CLOEXEC = Int32(0x80000)
+    static let EPOLLIN: UInt32 = 0x001
+    static let EPOLLOUT: UInt32 = 0x004
+    static let EPOLLERR: UInt32 = 0x008
+    static let EPOLLHUP: UInt32 = 0x010
+    static let EPOLLET: UInt32 = 0x80000000
+    static let EPOLL_CTL_ADD = Int32(1)
+    static let EPOLL_CTL_DEL = Int32(2)
+    static let EPOLL_CTL_MOD = Int32(3)
     #endif
     
     // MARK: - Event FD Constants
@@ -66,8 +66,9 @@ internal struct LinuxCompat {
     static let EFD_CLOEXEC = Int32(0x80000)
     static let EFD_NONBLOCK = Int32(0x800)
     #else
-    static let EFD_CLOEXEC = Int32(Glibc.EFD_CLOEXEC)
-    static let EFD_NONBLOCK = Int32(Glibc.EFD_NONBLOCK)
+    // Use raw values for Glibc - these are standard on Linux
+    static let EFD_CLOEXEC = Int32(0x80000)
+    static let EFD_NONBLOCK = Int32(0x800)
     #endif
     
     // MARK: - TCP/IP Constants

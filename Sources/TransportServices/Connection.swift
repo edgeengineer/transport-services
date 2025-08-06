@@ -16,7 +16,7 @@ import Foundation
 
 /// Represents an established or establishing transport connection
 /// Based on RFC 9622 Section 3
-public protocol Connection: Actor {
+public protocol Connection: AnyObject, Sendable {
     /// The preconnection used to create this connection
     var preconnection: Preconnection { get }
     
@@ -24,13 +24,13 @@ public protocol Connection: Actor {
     var eventHandler: @Sendable (TransportServicesEvent) -> Void { get }
     
     /// Current state of the connection
-    var state: ConnectionState { get }
+    var state: ConnectionState { get async }
     
     /// Transport properties for this connection
-    var properties: TransportProperties { get }
+    var properties: TransportProperties { get async }
     
     /// The connection group this connection belongs to
-    var group: ConnectionGroup? { get }
+    var group: ConnectionGroup? { get async }
     
     // MARK: - Connection Lifecycle
     
@@ -38,7 +38,7 @@ public protocol Connection: Actor {
     func close() async
     
     /// Abort the connection immediately
-    func abort()
+    func abort() async
     
     /// Clone this connection to create a new connection with same properties
     func clone() async throws -> any Connection
@@ -52,26 +52,26 @@ public protocol Connection: Actor {
     func receive(minIncompleteLength: Int?, maxLength: Int?) async throws -> (Data, MessageContext)
     
     /// Start receiving data continuously
-    func startReceiving(minIncompleteLength: Int?, maxLength: Int?)
+    func startReceiving(minIncompleteLength: Int?, maxLength: Int?) async
     
     // MARK: - Endpoint Management
     
     /// Add remote endpoints for multipath or migration
-    func addRemote(_ remoteEndpoints: [RemoteEndpoint])
+    func addRemote(_ remoteEndpoints: [RemoteEndpoint]) async
     
     /// Remove remote endpoints
-    func removeRemote(_ remoteEndpoints: [RemoteEndpoint])
+    func removeRemote(_ remoteEndpoints: [RemoteEndpoint]) async
     
     /// Add local endpoints for multipath or migration
-    func addLocal(_ localEndpoints: [LocalEndpoint])
+    func addLocal(_ localEndpoints: [LocalEndpoint]) async
     
     /// Remove local endpoints
-    func removeLocal(_ localEndpoints: [LocalEndpoint])
+    func removeLocal(_ localEndpoints: [LocalEndpoint]) async
     
     // MARK: - Connection Groups
     
     /// Set the connection group
-    func setGroup(_ group: ConnectionGroup?)
+    func setGroup(_ group: ConnectionGroup?) async
 }
 
 /// Default implementations for Connection protocol
@@ -84,61 +84,8 @@ public extension Connection {
         try await receive(minIncompleteLength: minIncompleteLength, maxLength: maxLength)
     }
     
-    func startReceiving(minIncompleteLength: Int? = nil, maxLength: Int? = nil) {
-        startReceiving(minIncompleteLength: minIncompleteLength, maxLength: maxLength)
-    }
-}
-
-/// Represents a group of related connections
-public actor ConnectionGroup {
-    private var connections: [any Connection] = []
-    private weak var scheduler: ConnectionGroupScheduler?
-    
-    public init(scheduler: ConnectionGroupScheduler? = nil) {
-        self.scheduler = scheduler
-    }
-    
-    /// Add a connection to the group
-    func addConnection(_ connection: any Connection) {
-        connections.append(connection)
-    }
-    
-    /// Remove a connection from the group
-    func removeConnection(_ connection: any Connection) {
-        connections.removeAll { existingConnection in
-            // Compare by identity since actors are reference types
-            return (existingConnection as AnyObject) === (connection as AnyObject)
-        }
-    }
-    
-    /// The number of connections in the group
-    public var connectionCount: Int {
-        connections.count
-    }
-    
-    /// Close all connections in the group
-    public func closeGroup() async {
-        await withTaskGroup(of: Void.self) { taskGroup in
-            for connection in connections {
-                taskGroup.addTask {
-                    await connection.close()
-                }
-            }
-        }
-    }
-    
-    /// Abort all connections in the group
-    public func abortGroup() {
-        // Create a task to abort all connections concurrently
-        Task {
-            await withTaskGroup(of: Void.self) { taskGroup in
-                for connection in connections {
-                    taskGroup.addTask {
-                        await connection.abort()
-                    }
-                }
-            }
-        }
+    func startReceiving(minIncompleteLength: Int? = nil, maxLength: Int? = nil) async {
+        await startReceiving(minIncompleteLength: minIncompleteLength, maxLength: maxLength)
     }
 }
 

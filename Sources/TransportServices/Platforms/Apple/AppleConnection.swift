@@ -16,20 +16,62 @@ import Foundation
 #if canImport(Network)
 import Network
 
+#if canImport(Synchronization)
+import Synchronization
+#endif
+
 /// Apple platform-specific connection implementation using Network.framework
-public final actor AppleConnection: Connection {
+public final class AppleConnection: Connection, @unchecked Sendable {
     public let preconnection: Preconnection
-    public nonisolated let eventHandler: @Sendable (TransportServicesEvent) -> Void
+    public let eventHandler: @Sendable (TransportServicesEvent) -> Void
     
     private let nwConnection: NWConnection
-    public private(set) var state: ConnectionState = .establishing
-    public private(set) var group: ConnectionGroup?
-    public private(set) var properties: TransportProperties
+    #if canImport(Synchronization)
+    private let stateLock = Mutex<Void>(())
+    #else
+    private let stateLock = NSLock()
+    #endif
+    private var _state: ConnectionState = .establishing
+    public var state: ConnectionState {
+        get async {
+            #if canImport(Synchronization)
+            return stateLock.withLock { _ in _state }
+            #else
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _state
+            #endif
+        }
+    }
+    private var _group: ConnectionGroup?
+    public var group: ConnectionGroup? {
+        get async {
+            #if canImport(Synchronization)
+            return stateLock.withLock { _ in _group }
+            #else
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _group
+            #endif
+        }
+    }
+    private var _properties: TransportProperties
+    public var properties: TransportProperties {
+        get async {
+            #if canImport(Synchronization)
+            return stateLock.withLock { _ in _properties }
+            #else
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _properties
+            #endif
+        }
+    }
     
     public init(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
         self.preconnection = preconnection
         self.eventHandler = eventHandler
-        self.properties = preconnection.transportProperties
+        self._properties = preconnection.transportProperties
         
         // Create NWParameters based on preconnection properties
         let parameters = AppleConnection.createParameters(from: preconnection)
@@ -47,45 +89,59 @@ public final actor AppleConnection: Connection {
         self.nwConnection = nwConnection
         self.preconnection = preconnection
         self.eventHandler = eventHandler
-        self.properties = preconnection.transportProperties
+        self._properties = preconnection.transportProperties
     }
     
     // MARK: - Connection Protocol Implementation
     
 
     
-    public func setGroup(_ group: ConnectionGroup?) {
-        self.group = group
+    public func setGroup(_ group: ConnectionGroup?) async {
+        #if canImport(Synchronization)
+        stateLock.withLock { _ in
+            self._group = group
+        }
+        #else
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        self._group = group
+        #endif
     }
     
     // MARK: - Connection Lifecycle
     
-    public func initiate() {
+    public func initiate() async {
         nwConnection.stateUpdateHandler = { [weak self] newState in
-            Task {
-                await self?.handleStateUpdate(newState)
-            }
+            self?.handleStateUpdate(newState)
         }
         nwConnection.start(queue: .global())
     }
     
     public func close() async {
-        state = .closing
-        let handler = eventHandler
-        Task.detached {
-            handler(.closed(self))
-        }
+        #if canImport(Synchronization)
+        stateLock.withLock { _ in _state = .closing }
+        #else
+        stateLock.lock()
+        _state = .closing
+        stateLock.unlock()
+        #endif
+        
         nwConnection.cancel()
+        eventHandler(.closed(self))
     }
     
-    nonisolated public func abort() {
+    public func abort() async {
+        #if canImport(Synchronization)
+        stateLock.withLock { _ in _state = .closed }
+        #else
+        stateLock.lock()
+        _state = .closed
+        stateLock.unlock()
+        #endif
+        
         // Force cancel the connection immediately
         nwConnection.forceCancel()
-        
-        // Update state asynchronously
-        Task {
-            await self.markAborted()
-        }
+        eventHandler(.connectionError(self, reason: "Connection aborted"))
     }
     
     public func clone() async throws -> any Connection {
@@ -96,7 +152,7 @@ public final actor AppleConnection: Connection {
         )
         
         // Copy connection group membership
-                 if let group = self.group {
+        if let group = await self.group {
              await group.addConnection(newConnection)
              await newConnection.setGroup(group)
          }
@@ -110,7 +166,8 @@ public final actor AppleConnection: Connection {
     // MARK: - Data Transfer
     
     public func send(data: Data, context: MessageContext, endOfMessage: Bool) async throws {
-        guard state == .established else {
+        let currentState = await state
+        guard currentState == .established else {
             throw TransportServicesError.connectionClosed
         }
         
@@ -128,7 +185,8 @@ public final actor AppleConnection: Connection {
     }
     
     public func receive(minIncompleteLength: Int?, maxLength: Int?) async throws -> (Data, MessageContext) {
-        guard state == .established else {
+        let currentState = await state
+        guard currentState == .established else {
             throw TransportServicesError.connectionClosed
         }
         
@@ -157,9 +215,9 @@ public final actor AppleConnection: Connection {
         return (data, context)
     }
     
-    public func startReceiving(minIncompleteLength: Int?, maxLength: Int?) {
+    public func startReceiving(minIncompleteLength: Int?, maxLength: Int?) async {
         Task {
-            while state == .established {
+            while await state == .established {
                 do {
                     let _ = try await receive(
                         minIncompleteLength: minIncompleteLength,
@@ -175,54 +233,77 @@ public final actor AppleConnection: Connection {
     
     // MARK: - Endpoint Management
     
-    public func addRemote(_ remoteEndpoints: [RemoteEndpoint]) {
+    public func addRemote(_ remoteEndpoints: [RemoteEndpoint]) async {
         // This would be implemented by Network.framework for multipath
         // For now, this is a placeholder
     }
     
-    public func removeRemote(_ remoteEndpoints: [RemoteEndpoint]) {
+    public func removeRemote(_ remoteEndpoints: [RemoteEndpoint]) async {
         // This would be implemented by Network.framework for multipath
         // For now, this is a placeholder
     }
     
-    public func addLocal(_ localEndpoints: [LocalEndpoint]) {
+    public func addLocal(_ localEndpoints: [LocalEndpoint]) async {
         // This would be implemented by Network.framework for multipath
         // For now, this is a placeholder
     }
     
-    public func removeLocal(_ localEndpoints: [LocalEndpoint]) {
+    public func removeLocal(_ localEndpoints: [LocalEndpoint]) async {
         // This would be implemented by Network.framework for multipath
         // For now, this is a placeholder
     }
     
     // MARK: - Private Methods
     
-    private func handleStateUpdate(_ newState: NWConnection.State) async {
+    private func handleStateUpdate(_ newState: NWConnection.State) {
+        #if canImport(Synchronization)
+        stateLock.withLock { _ in
+            switch newState {
+            case .ready:
+                self._state = .established
+                eventHandler(.ready(self))
+            case .failed(let error):
+                self._state = .closed
+                eventHandler(.connectionError(self, reason: error.localizedDescription))
+            case .cancelled:
+                self._state = .closed
+                eventHandler(.closed(self))
+            case .waiting(let error):
+                eventHandler(.connectionError(self, reason: error.localizedDescription))
+            case .preparing:
+                self._state = .establishing
+            case .setup:
+                self._state = .establishing
+            @unknown default:
+                break
+            }
+        }
+        #else
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        
         switch newState {
         case .ready:
-            self.state = .established
+            self._state = .established
             eventHandler(.ready(self))
         case .failed(let error):
-            self.state = .closed
+            self._state = .closed
             eventHandler(.connectionError(self, reason: error.localizedDescription))
         case .cancelled:
-            self.state = .closed
+            self._state = .closed
             eventHandler(.closed(self))
         case .waiting(let error):
             eventHandler(.connectionError(self, reason: error.localizedDescription))
         case .preparing:
-                         self.state = .establishing
+            self._state = .establishing
         case .setup:
-                         self.state = .establishing
+            self._state = .establishing
         @unknown default:
             break
         }
+        #endif
     }
     
-    private func markAborted() {
-        state = .closed
-        eventHandler(.connectionError(self, reason: "Connection aborted"))
-    }
     
     // MARK: - Helper Methods
     

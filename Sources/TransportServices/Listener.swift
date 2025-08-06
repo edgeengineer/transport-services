@@ -15,7 +15,7 @@ import Foundation
 
 /// Represents a passive endpoint that listens for incoming connections
 /// Based on RFC 9622 Section 7.2
-public protocol Listener: Actor {
+public protocol Listener: AnyObject, Sendable {
     /// The preconnection used to create this listener
     var preconnection: Preconnection { get }
     
@@ -26,16 +26,16 @@ public protocol Listener: Actor {
     func stop() async
     
     /// Set the maximum number of new connections to accept
-    func setNewConnectionLimit(_ value: UInt?)
+    func setNewConnectionLimit(_ value: UInt?) async
     
     /// Get the current connection limit
-    func getNewConnectionLimit() -> UInt?
+    func getNewConnectionLimit() async -> UInt?
     
     /// Get the number of accepted connections
-    func getAcceptedConnectionCount() -> UInt
+    func getAcceptedConnectionCount() async -> UInt
     
     /// Get listener properties
-    func getProperties() -> TransportProperties
+    func getProperties() async -> TransportProperties
 }
 
 /// Extension for multicast support

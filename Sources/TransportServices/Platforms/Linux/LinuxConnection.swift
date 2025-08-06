@@ -14,15 +14,87 @@ import Glibc
 #error("Unsupported C library")
 #endif
 
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
+import Foundation
+#endif
+#endif
+
+#if canImport(Synchronization)
+import Synchronization
+#endif
+
+// Use constants from LinuxConstants
+
 /// Linux platform-specific connection implementation using BSD sockets
-public final actor LinuxConnection: Connection {
+public class LinuxConnection: Connection, @unchecked Sendable {
     public let preconnection: Preconnection
-    public nonisolated let eventHandler: @Sendable (TransportServicesEvent) -> Void
+    public let eventHandler: @Sendable (TransportServicesEvent) -> Void
     
-    private var socketFd: Int32 = -1
-    public private(set) var state: ConnectionState = .establishing
-    public private(set) var group: ConnectionGroup?
-    public private(set) var properties: TransportProperties
+    #if canImport(Synchronization)
+    private let stateLock = Mutex<Void>(())
+    #else
+    private let stateLock = NSLock()
+    #endif
+    private var _socketFd: Int32 = -1
+    internal var socketFd: Int32 {
+        get {
+            #if canImport(Synchronization)
+            return stateLock.withLock { _ in _socketFd }
+            #else
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _socketFd
+            #endif
+        }
+        set {
+            #if canImport(Synchronization)
+            stateLock.withLock { _ in _socketFd = newValue }
+            #else
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            _socketFd = newValue
+            #endif
+        }
+    }
+    internal var _state: ConnectionState = .establishing
+    public var state: ConnectionState {
+        get async {
+            #if canImport(Synchronization)
+            return stateLock.withLock { _ in _state }
+            #else
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _state
+            #endif
+        }
+    }
+    private var _group: ConnectionGroup?
+    public var group: ConnectionGroup? {
+        get async {
+            #if canImport(Synchronization)
+            return stateLock.withLock { _ in _group }
+            #else
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _group
+            #endif
+        }
+    }
+    private var _properties: TransportProperties
+    public var properties: TransportProperties {
+        get async {
+            #if canImport(Synchronization)
+            return stateLock.withLock { _ in _properties }
+            #else
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _properties
+            #endif
+        }
+    }
     
     // Buffer for partial messages
     private var receiveBuffer = Data()
@@ -31,13 +103,21 @@ public final actor LinuxConnection: Connection {
     public init(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
         self.preconnection = preconnection
         self.eventHandler = eventHandler
-        self.properties = preconnection.transportProperties
+        self._properties = preconnection.transportProperties
     }
     
     // MARK: - Connection Protocol Implementation
     
-    public func setGroup(_ group: ConnectionGroup?) {
-        self.group = group
+    public func setGroup(_ group: ConnectionGroup?) async {
+        #if canImport(Synchronization)
+        stateLock.withLock { _ in
+            self._group = group
+        }
+        #else
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        self._group = group
+        #endif
     }
     
     // MARK: - Connection Lifecycle
@@ -45,14 +125,14 @@ public final actor LinuxConnection: Connection {
     /// Initiate the connection
     public func initiate() async {
         guard let remoteEndpoint = preconnection.remoteEndpoints.first else {
-            eventHandler(.establishmentError(self, reason: "No remote endpoint specified"))
+            eventHandler(.establishmentError(reason: "No remote endpoint specified"))
             return
         }
         
         do {
             // Create socket based on transport properties
-            let socketType = properties.reliability == .require ? SOCK_STREAM : SOCK_DGRAM
-            let `protocol` = properties.reliability == .require ? IPPROTO_TCP : IPPROTO_UDP
+            let socketType = _properties.reliability == .require ? LinuxCompat.SOCK_STREAM : LinuxCompat.SOCK_DGRAM
+            let `protocol` = _properties.reliability == .require ? IPPROTO_TCP : IPPROTO_UDP
             
             socketFd = socket(AF_INET, socketType, Int32(`protocol`))
             guard socketFd >= 0 else {
@@ -76,55 +156,55 @@ public final actor LinuxConnection: Connection {
             // Register with event loop for I/O events
             registerWithEventLoop()
             
-            state = .established
+            _state = .established
             eventHandler(.ready(self))
             
         } catch {
-            state = .closed
+            _state = .closed
             if socketFd >= 0 {
-                close(socketFd)
+                Glibc.close(socketFd)
                 socketFd = -1
             }
-            eventHandler(.establishmentError(self, reason: error.localizedDescription))
+            eventHandler(.establishmentError(reason: error.localizedDescription))
         }
     }
     
     public func close() async {
-        guard state != .closed else { return }
+        guard _state != .closed else { return }
         
-        state = .closing
+        _state = .closing
         
         if socketFd >= 0 {
             // Unregister from event loop
             EventLoop.unregisterSocket(socketFd)
             
             // Graceful shutdown for TCP
-            if properties.reliability == .require {
-                shutdown(socketFd, SHUT_RDWR)
+            if _properties.reliability == .require {
+                shutdown(socketFd, Int32(SHUT_RDWR))
             }
             
-            close(socketFd)
+            Glibc.close(socketFd)
             socketFd = -1
         }
         
-        state = .closed
+        _state = .closed
         eventHandler(.closed(self))
     }
     
-    nonisolated public func abort() {
+    public func abort() async {
         Task {
             await self.abortInternal()
         }
     }
     
-    private func abortInternal() {
-        guard state != .closed else { return }
+    private func abortInternal() async {
+        guard _state != .closed else { return }
         
-        state = .closed
+        _state = .closed
         
         if socketFd >= 0 {
             EventLoop.unregisterSocket(socketFd)
-            close(socketFd)
+            Glibc.close(socketFd)
             socketFd = -1
         }
         
@@ -137,7 +217,7 @@ public final actor LinuxConnection: Connection {
             eventHandler: eventHandler
         )
         
-        if let group = self.group {
+        if let group = await self.group {
             await group.addConnection(newConnection)
             await newConnection.setGroup(group)
         }
@@ -150,7 +230,7 @@ public final actor LinuxConnection: Connection {
     // MARK: - Data Transfer
     
     public func send(data: Data, context: MessageContext, endOfMessage: Bool) async throws {
-        guard state == .established else {
+        guard _state == .established else {
             throw TransportServicesError.connectionClosed
         }
         
@@ -177,7 +257,7 @@ public final actor LinuxConnection: Connection {
     }
     
     public func receive(minIncompleteLength: Int?, maxLength: Int?) async throws -> (Data, MessageContext) {
-        guard state == .established else {
+        guard _state == .established else {
             throw TransportServicesError.connectionClosed
         }
         
@@ -215,9 +295,9 @@ public final actor LinuxConnection: Connection {
         return (data, context)
     }
     
-    public func startReceiving(minIncompleteLength: Int?, maxLength: Int?) {
+    public func startReceiving(minIncompleteLength: Int?, maxLength: Int?) async {
         Task {
-            while state == .established {
+            while await state == .established {
                 do {
                     let _ = try await receive(
                         minIncompleteLength: minIncompleteLength,
@@ -233,20 +313,20 @@ public final actor LinuxConnection: Connection {
     
     // MARK: - Endpoint Management
     
-    public func addRemote(_ remoteEndpoints: [RemoteEndpoint]) {
+    public func addRemote(_ remoteEndpoints: [RemoteEndpoint]) async {
         // Not implemented for basic Linux sockets
         // Would require SCTP or custom multipath implementation
     }
     
-    public func removeRemote(_ remoteEndpoints: [RemoteEndpoint]) {
+    public func removeRemote(_ remoteEndpoints: [RemoteEndpoint]) async {
         // Not implemented for basic Linux sockets
     }
     
-    public func addLocal(_ localEndpoints: [LocalEndpoint]) {
+    public func addLocal(_ localEndpoints: [LocalEndpoint]) async {
         // Not implemented for basic Linux sockets
     }
     
-    public func removeLocal(_ localEndpoints: [LocalEndpoint]) {
+    public func removeLocal(_ localEndpoints: [LocalEndpoint]) async {
         // Not implemented for basic Linux sockets
     }
     
@@ -265,15 +345,15 @@ public final actor LinuxConnection: Connection {
         setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR, &reuseAddr, socklen_t(MemoryLayout<Int32>.size))
         
         // Configure keep-alive if requested
-        if properties.keepAlive != .prohibit {
+        if _properties.keepAlive != .prohibit {
             var keepAlive: Int32 = 1
             setsockopt(socketFd, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, socklen_t(MemoryLayout<Int32>.size))
         }
         
         // Configure TCP nodelay for low latency
-        if properties.reliability == .require {
+        if _properties.reliability == .require {
             var nodelay: Int32 = 1
-            setsockopt(socketFd, IPPROTO_TCP, TCP_NODELAY, &nodelay, socklen_t(MemoryLayout<Int32>.size))
+            setsockopt(socketFd, Int32(IPPROTO_TCP), TCP_NODELAY, &nodelay, socklen_t(MemoryLayout<Int32>.size))
         }
     }
     
@@ -350,7 +430,7 @@ public final actor LinuxConnection: Connection {
             Task {
                 var hints = addrinfo()
                 hints.ai_family = AF_INET
-                hints.ai_socktype = properties.reliability == .require ? SOCK_STREAM : SOCK_DGRAM
+                hints.ai_socktype = _properties.reliability == .require ? LinuxCompat.SOCK_STREAM : LinuxCompat.SOCK_DGRAM
                 
                 var result: UnsafeMutablePointer<addrinfo>?
                 let status = getaddrinfo(hostname, nil, &hints, &result)
@@ -383,7 +463,7 @@ public final actor LinuxConnection: Connection {
     private func registerWithEventLoop() {
         guard socketFd >= 0 else { return }
         
-        let events = UInt32(EPOLLIN | EPOLLOUT | EPOLLET)
+        let events = LinuxCompat.EPOLLIN | LinuxCompat.EPOLLOUT | LinuxCompat.EPOLLET
         _ = EventLoop.registerSocket(socketFd, events: events) { [weak self] in
             Task {
                 await self?.handleSocketEvent()
@@ -391,7 +471,7 @@ public final actor LinuxConnection: Connection {
         }
     }
     
-    private func handleSocketEvent() {
+    private func handleSocketEvent() async {
         // Handle socket events (called by event loop)
         // This would process any pending I/O operations
     }

@@ -9,12 +9,12 @@
 internal final class EventLoop: @unchecked Sendable {
     private static let singleton = EventLoop()
     
-    #if canImport(Dispatch)
-    private let platformLoop = AppleEventLoop()
-    #elseif os(Linux)
+    #if os(Linux)
     private let platformLoop = LinuxEventLoop()
     #elseif os(Windows)
     private let platformLoop = WindowsEventLoop()
+    #elseif canImport(Dispatch)
+    private let platformLoop = AppleEventLoop()
     #endif
     
     private init() {}
@@ -24,7 +24,7 @@ internal final class EventLoop: @unchecked Sendable {
         singleton.platformLoop.execute(block)
     }
     
-    #if canImport(Dispatch)
+    #if os(macOS) || os(iOS) || os(tvOS) || os(watchOS)
     /// Schedule a block to execute after a delay (Apple platforms only)
     public static func schedule(after delay: Double, _ block: @escaping @Sendable () -> Void) {
         singleton.platformLoop.schedule(after: delay, block)

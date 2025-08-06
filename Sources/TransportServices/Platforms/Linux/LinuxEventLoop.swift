@@ -15,35 +15,63 @@ import Foundation
 #error("Unsupported C library")
 #endif
 
+// Define epoll structures for Swift
+struct epoll_data_t {
+    var fd: Int32 = 0
+}
+
+struct epoll_event {
+    var events: UInt32
+    var data: epoll_data_t
+    
+    init() {
+        self.events = 0
+        self.data = epoll_data_t()
+    }
+}
+
+// Declare epoll functions
+@_silgen_name("epoll_create1")
+func epoll_create1(_ flags: Int32) -> Int32
+
+@_silgen_name("epoll_ctl")
+func epoll_ctl(_ epfd: Int32, _ op: Int32, _ fd: Int32, _ event: UnsafeMutablePointer<epoll_event>?) -> Int32
+
+@_silgen_name("epoll_wait")
+func epoll_wait(_ epfd: Int32, _ events: UnsafeMutablePointer<epoll_event>?, _ maxevents: Int32, _ timeout: Int32) -> Int32
+
+@_silgen_name("eventfd")
+func eventfd(_ count: UInt32, _ flags: Int32) -> Int32
+
 /// Linux EventLoop implementation using epoll for async event handling
 internal final class LinuxEventLoop: @unchecked Sendable {
     private let epollFd: Int32
     private let eventFd: Int32
     private let running = AtomicBool(true)
-    private let thread: Thread
+    private var thread: Thread!
     private let pendingTasks = AtomicArray<() -> Void>()
     private var socketHandlers = [Int32: () -> Void]()
     private let handlersLock = ThreadLock()
     
     init() {
         // Create epoll instance
-        self.epollFd = epoll_create1(Int32(EPOLL_CLOEXEC))
+        self.epollFd = epoll_create1(LinuxCompat.EPOLL_CLOEXEC)
         guard self.epollFd >= 0 else {
             fatalError("Failed to create epoll instance: \(String(cString: strerror(errno)))")
         }
         
         // Create eventfd for task notifications
-        self.eventFd = eventfd(0, Int32(EFD_CLOEXEC | EFD_NONBLOCK))
+        self.eventFd = eventfd(0, LinuxCompat.EFD_CLOEXEC | LinuxCompat.EFD_NONBLOCK)
         guard self.eventFd >= 0 else {
             fatalError("Failed to create eventfd: \(String(cString: strerror(errno)))")
         }
         
         // Register eventfd with epoll
         var event = epoll_event()
-        event.events = UInt32(EPOLLIN | EPOLLET)
+        event.events = LinuxCompat.EPOLLIN | LinuxCompat.EPOLLET
         event.data.fd = self.eventFd
         
-        let result = epoll_ctl(self.epollFd, EPOLL_CTL_ADD, self.eventFd, &event)
+        let result = epoll_ctl(self.epollFd, LinuxCompat.EPOLL_CTL_ADD, self.eventFd, &event)
         guard result == 0 else {
             fatalError("Failed to add eventfd to epoll: \(String(cString: strerror(errno)))")
         }
@@ -128,7 +156,7 @@ internal final class LinuxEventLoop: @unchecked Sendable {
         event.events = events
         event.data.fd = fd
         
-        let result = epoll_ctl(epollFd, EPOLL_CTL_ADD, fd, &event)
+        let result = epoll_ctl(epollFd, LinuxCompat.EPOLL_CTL_ADD, fd, &event)
         if result == 0 {
             handlersLock.withLock {
                 socketHandlers[fd] = handler
@@ -140,7 +168,7 @@ internal final class LinuxEventLoop: @unchecked Sendable {
     
     /// Unregister a socket from monitoring
     func unregisterSocket(_ fd: Int32) {
-        epoll_ctl(epollFd, EPOLL_CTL_DEL, fd, nil)
+        epoll_ctl(epollFd, LinuxCompat.EPOLL_CTL_DEL, fd, nil)
         handlersLock.withLock {
             socketHandlers.removeValue(forKey: fd)
         }
@@ -152,7 +180,7 @@ internal final class LinuxEventLoop: @unchecked Sendable {
         event.events = events
         event.data.fd = fd
         
-        let result = epoll_ctl(epollFd, EPOLL_CTL_MOD, fd, &event)
+        let result = epoll_ctl(epollFd, LinuxCompat.EPOLL_CTL_MOD, fd, &event)
         return result == 0
     }
 }

@@ -17,9 +17,9 @@ import Foundation
 import Network
 
 /// Apple platform-specific listener implementation using Network.framework
-public final actor AppleListener: Listener {
+public final class AppleListener: Listener, @unchecked Sendable {
     public let preconnection: Preconnection
-    public nonisolated let eventHandler: @Sendable (TransportServicesEvent) -> Void
+    public let eventHandler: @Sendable (TransportServicesEvent) -> Void
     
     private let nwListener: NWListener
     private var pendingConnections: [NWConnection] = []
@@ -215,19 +215,19 @@ public final actor AppleListener: Listener {
     
     // MARK: - Listener Protocol Implementation
     
-    public func setNewConnectionLimit(_ value: UInt?) {
+    public func setNewConnectionLimit(_ value: UInt?) async {
         self.newConnectionLimit = value
     }
     
-    public func getNewConnectionLimit() -> UInt? {
+    public func getNewConnectionLimit() async -> UInt? {
         return newConnectionLimit
     }
     
-    public func getAcceptedConnectionCount() -> UInt {
+    public func getAcceptedConnectionCount() async -> UInt {
         return acceptedConnections
     }
     
-    public func getProperties() -> TransportProperties {
+    public func getProperties() async -> TransportProperties {
         return preconnection.transportProperties
     }
     
@@ -258,7 +258,7 @@ public final actor AppleListener: Listener {
 #else
 
 /// Stub implementation for non-Apple platforms
-public final class AppleListener: Listener {
+public final class AppleListener: Listener, @unchecked Sendable {
     public let preconnection: Preconnection
     public let eventHandler: @Sendable (TransportServicesEvent) -> Void
     
@@ -277,10 +277,10 @@ public final class AppleListener: Listener {
         throw TransportServicesError.notSupported(reason: "Apple Network.framework not available")
     }
     
-    public func setNewConnectionLimit(_ value: UInt?) {}
-    public func getNewConnectionLimit() -> UInt? { nil }
-    public func getAcceptedConnectionCount() -> UInt { 0 }
-    public func getProperties() -> TransportProperties { preconnection.transportProperties }
+    public func setNewConnectionLimit(_ value: UInt?) async {}
+    public func getNewConnectionLimit() async -> UInt? { nil }
+    public func getAcceptedConnectionCount() async -> UInt { 0 }
+    public func getProperties() async -> TransportProperties { preconnection.transportProperties }
 }
 
 #endif

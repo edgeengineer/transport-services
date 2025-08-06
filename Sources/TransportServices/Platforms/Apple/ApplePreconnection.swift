@@ -13,6 +13,9 @@ import Foundation
 #endif
 #endif
 
+#if canImport(Network)
+import Network
+
 /// Apple platform-specific implementation of Preconnection
 public struct ApplePreconnection: Preconnection {
     public var localEndpoints: [LocalEndpoint]
@@ -172,3 +175,5 @@ private func withTimeout<T>(_ timeout: TimeInterval?, operation: @escaping @Send
         return try await operation()
     }
 }
+
+#endif

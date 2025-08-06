@@ -14,14 +14,71 @@ import Glibc
 #error("Unsupported C library")
 #endif
 
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
+import Foundation
+#endif
+#endif
+
+#if canImport(Synchronization)
+import Synchronization
+#endif
+
 /// Linux platform-specific listener implementation using BSD sockets
-public final actor LinuxListener: Listener {
+public final class LinuxListener: Listener, @unchecked Sendable {
     public let preconnection: Preconnection
-    public nonisolated let eventHandler: @Sendable (TransportServicesEvent) -> Void
+    public let eventHandler: @Sendable (TransportServicesEvent) -> Void
     
+    #if canImport(Synchronization)
+    private let stateLock = Mutex<Void>(())
+    #else
+    private let stateLock = NSLock()
+    #endif
     private var listenSocketFd: Int32 = -1
-    public private(set) var state: ListenerState = .setup
-    public private(set) var group: ConnectionGroup?
+    private var _state: ListenerState = .setup
+    public private(set) var state: ListenerState {
+        get {
+            #if canImport(Synchronization)
+            return stateLock.withLock { _ in _state }
+            #else
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _state
+            #endif
+        }
+        set {
+            #if canImport(Synchronization)
+            stateLock.withLock { _ in _state = newValue }
+            #else
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            _state = newValue
+            #endif
+        }
+    }
+    private var _group: ConnectionGroup?
+    public private(set) var group: ConnectionGroup? {
+        get {
+            #if canImport(Synchronization)
+            return stateLock.withLock { _ in _group }
+            #else
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _group
+            #endif
+        }
+        set {
+            #if canImport(Synchronization)
+            stateLock.withLock { _ in _group = newValue }
+            #else
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            _group = newValue
+            #endif
+        }
+    }
     
     public init(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
         self.preconnection = preconnection
@@ -29,6 +86,24 @@ public final actor LinuxListener: Listener {
     }
     
     // MARK: - Listener Protocol Implementation
+    
+    public func setNewConnectionLimit(_ value: UInt?) async {
+        // TODO: Implement connection limit
+    }
+    
+    public func getNewConnectionLimit() async -> UInt? {
+        // TODO: Implement connection limit
+        return nil
+    }
+    
+    public func getAcceptedConnectionCount() async -> UInt {
+        // TODO: Implement connection counting
+        return 0
+    }
+    
+    public func getProperties() async -> TransportProperties {
+        return preconnection.transportProperties
+    }
     
     public func listen() async throws {
         guard let localEndpoint = preconnection.localEndpoints.first else {
@@ -38,7 +113,7 @@ public final actor LinuxListener: Listener {
         do {
             // Create socket based on transport properties
             let properties = preconnection.transportProperties
-            let socketType = properties.reliability == .require ? SOCK_STREAM : SOCK_DGRAM
+            let socketType = properties.reliability == .require ? LinuxCompat.SOCK_STREAM : LinuxCompat.SOCK_DGRAM
             let `protocol` = properties.reliability == .require ? IPPROTO_TCP : IPPROTO_UDP
             
             listenSocketFd = socket(AF_INET, socketType, Int32(`protocol`))
@@ -68,7 +143,7 @@ public final actor LinuxListener: Listener {
             registerWithEventLoop()
             
             state = .ready
-            eventHandler(.listenerReady(self))
+            eventHandler(.stopped(self))
             
             // Start accepting connections
             startAccepting()
@@ -79,7 +154,7 @@ public final actor LinuxListener: Listener {
                 close(listenSocketFd)
                 listenSocketFd = -1
             }
-            eventHandler(.listenerError(self, reason: error.localizedDescription))
+            eventHandler(.establishmentError(reason: error.localizedDescription))
             throw error
         }
     }
@@ -98,7 +173,7 @@ public final actor LinuxListener: Listener {
             listenSocketFd = -1
         }
         
-        eventHandler(.listenerClosed(self))
+        eventHandler(.stopped(self))
     }
     
     public func newConnectionGroup() async -> ConnectionGroup {
@@ -161,7 +236,7 @@ public final actor LinuxListener: Listener {
     private func registerWithEventLoop() {
         guard listenSocketFd >= 0 else { return }
         
-        let events = UInt32(EPOLLIN | EPOLLET)
+        let events = UInt32(LinuxCompat.EPOLLIN | LinuxCompat.EPOLLET)
         _ = EventLoop.registerSocket(listenSocketFd, events: events) { [weak self] in
             Task {
                 await self?.handleAcceptEvent()
@@ -290,7 +365,7 @@ public final actor LinuxListener: Listener {
     }
     
     private func createRemoteEndpoint(from addr: sockaddr_in) -> RemoteEndpoint {
-        let endpoint = RemoteEndpoint()
+        var endpoint = RemoteEndpoint()
         
         // Convert IP address to string
         var ipBuffer = Array<CChar>(repeating: 0, count: Int(INET_ADDRSTRLEN))
@@ -307,12 +382,21 @@ public final actor LinuxListener: Listener {
     private func createAcceptedPreconnection(remoteEndpoint: RemoteEndpoint) -> Preconnection {
         // Create a new preconnection based on the listener's preconnection
         // but with the specific remote endpoint
-        let newPreconnection = preconnection.clone()
-        newPreconnection.remoteEndpoints = [remoteEndpoint]
-        return newPreconnection
+        // Create a new preconnection based on the listener's preconnection
+        // but with the specific remote endpoint
+        if let linuxPreconnection = preconnection as? LinuxPreconnection {
+            var newPreconnection = LinuxPreconnection()
+            newPreconnection.localEndpoints = linuxPreconnection.localEndpoints
+            newPreconnection.remoteEndpoints = [remoteEndpoint]
+            newPreconnection.transportProperties = linuxPreconnection.transportProperties
+            newPreconnection.securityParameters = linuxPreconnection.securityParameters
+            return newPreconnection
+        } else {
+            fatalError("Expected LinuxPreconnection")
+        }
     }
     
-    private func handleAcceptEvent() {
+    private func handleAcceptEvent() async {
         // Called by event loop when socket is ready for accept
         Task {
             await acceptConnections()
@@ -321,7 +405,7 @@ public final actor LinuxListener: Listener {
 }
 
 /// Special connection class for accepted TCP connections
-private actor LinuxAcceptedConnection: LinuxConnection {
+private final class LinuxAcceptedConnection: LinuxConnection, @unchecked Sendable {
     private let acceptedSocketFd: Int32
     
     init(socketFd: Int32, preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
@@ -329,9 +413,9 @@ private actor LinuxAcceptedConnection: LinuxConnection {
         super.init(preconnection: preconnection, eventHandler: eventHandler)
     }
     
-    func markReady() {
+    func markReady() async {
         self.socketFd = acceptedSocketFd
-        self.state = .established
+        self._state = .established
         
         // Register with event loop
         registerWithEventLoop()
@@ -343,7 +427,7 @@ private actor LinuxAcceptedConnection: LinuxConnection {
     private func registerWithEventLoop() {
         guard socketFd >= 0 else { return }
         
-        let events = UInt32(EPOLLIN | EPOLLOUT | EPOLLET)
+        let events = UInt32(LinuxCompat.EPOLLIN | LinuxCompat.EPOLLOUT | LinuxCompat.EPOLLET)
         _ = EventLoop.registerSocket(socketFd, events: events) { [weak self] in
             Task {
                 // Handle socket events
@@ -354,7 +438,7 @@ private actor LinuxAcceptedConnection: LinuxConnection {
 }
 
 /// Special connection class for UDP virtual connections
-private actor LinuxUDPConnection: LinuxConnection {
+private final class LinuxUDPConnection: LinuxConnection, @unchecked Sendable {
     private let sharedSocketFd: Int32
     private let remoteAddress: sockaddr_in
     private var initialData: Data?
@@ -366,18 +450,18 @@ private actor LinuxUDPConnection: LinuxConnection {
         super.init(preconnection: preconnection, eventHandler: eventHandler)
     }
     
-    func markReady() {
+    func markReady() async {
         self.socketFd = sharedSocketFd
-        self.state = .established
+        self._state = .established
         eventHandler(.ready(self))
     }
     
-    func storeInitialData(_ data: Data) {
+    func storeInitialData(_ data: Data) async {
         self.initialData = data
     }
     
     override public func send(data: Data, context: MessageContext, endOfMessage: Bool) async throws {
-        guard state == .established else {
+        guard await state == .established else {
             throw TransportServicesError.connectionClosed
         }
         
@@ -413,7 +497,7 @@ private actor LinuxUDPConnection: LinuxConnection {
 }
 
 /// Listener state enumeration (Linux-specific)
-internal enum ListenerState: Sendable {
+public enum ListenerState: Sendable {
     case setup
     case ready
     case failed

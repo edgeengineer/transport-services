@@ -14,6 +14,14 @@ import Glibc
 #error("Unsupported C library")
 #endif
 
+#if !hasFeature(Embedded)
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#elseif canImport(Foundation)
+import Foundation
+#endif
+#endif
+
 /// Linux platform-specific preconnection implementation
 public struct LinuxPreconnection: Preconnection {
     public var localEndpoints: [LocalEndpoint]
@@ -43,7 +51,7 @@ public struct LinuxPreconnection: Preconnection {
                 // Get all available interfaces
                 let interfaces = await getLocalInterfaces()
                 for interface in interfaces {
-                    let resolved = endpoint.clone()
+                    var resolved = endpoint.clone()
                     resolved.interface = interface.name
                     resolved.ipAddress = interface.address
                     resolvedLocal.append(resolved)
@@ -59,7 +67,7 @@ public struct LinuxPreconnection: Preconnection {
                 // Resolve hostname to IP addresses
                 let addresses = await resolveHostname(hostName)
                 for address in addresses {
-                    let resolved = endpoint.clone()
+                    var resolved = endpoint.clone()
                     resolved.ipAddress = address
                     resolved.hostName = nil // Clear hostname after resolution
                     resolvedRemote.append(resolved)
@@ -87,7 +95,7 @@ public struct LinuxPreconnection: Preconnection {
         
         // Validate we have at least one remote endpoint
         guard !remoteEndpoints.isEmpty else {
-            throw TransportServicesError.missingRemoteEndpoint
+            throw TransportServicesError.invalidConfiguration
         }
         
         // Create connection
@@ -131,7 +139,7 @@ public struct LinuxPreconnection: Preconnection {
         
         // Validate we have at least one local endpoint
         guard !localEndpoints.isEmpty else {
-            throw TransportServicesError.missingLocalEndpoint
+            throw TransportServicesError.invalidConfiguration
         }
         
         // Create listener
@@ -148,10 +156,10 @@ public struct LinuxPreconnection: Preconnection {
         
         // Validate we have both local and remote endpoints
         guard !localEndpoints.isEmpty else {
-            throw TransportServicesError.missingLocalEndpoint
+            throw TransportServicesError.invalidConfiguration
         }
         guard !remoteEndpoints.isEmpty else {
-            throw TransportServicesError.missingRemoteEndpoint
+            throw TransportServicesError.invalidConfiguration
         }
         
         // For rendezvous, we need to both listen and connect
@@ -221,7 +229,7 @@ public struct LinuxPreconnection: Preconnection {
             Task {
                 var hints = addrinfo()
                 hints.ai_family = AF_INET // IPv4 for simplicity
-                hints.ai_socktype = transportProperties.reliability == .require ? SOCK_STREAM : SOCK_DGRAM
+                hints.ai_socktype = Int32(transportProperties.reliability == .require ? LinuxCompat.SOCK_STREAM : LinuxCompat.SOCK_DGRAM)
                 
                 var result: UnsafeMutablePointer<addrinfo>?
                 let status = getaddrinfo(hostname, nil, &hints, &result)
@@ -260,7 +268,7 @@ public struct LinuxPreconnection: Preconnection {
 // Helper extensions for cloning endpoints
 extension LocalEndpoint {
     func clone() -> LocalEndpoint {
-        let endpoint = LocalEndpoint()
+        var endpoint = LocalEndpoint()
         endpoint.interface = self.interface
         endpoint.port = self.port
         endpoint.ipAddress = self.ipAddress
@@ -270,7 +278,7 @@ extension LocalEndpoint {
 
 extension RemoteEndpoint {
     func clone() -> RemoteEndpoint {
-        let endpoint = RemoteEndpoint()
+        var endpoint = RemoteEndpoint()
         endpoint.hostName = self.hostName
         endpoint.port = self.port
         endpoint.service = self.service

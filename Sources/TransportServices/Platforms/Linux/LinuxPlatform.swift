@@ -51,48 +51,67 @@ public final class LinuxPlatform: Platform {
     
     public func gatherCandidates(preconnection: any Preconnection) async throws -> CandidateSet {
         // Gather network path candidates for Linux
-        var candidates = CandidateSet()
+        var localCandidates: [LocalCandidate] = []
+        var remoteCandidates: [RemoteCandidate] = []
         
         // Get available interfaces
         let interfaces = try await getAvailableInterfaces()
         
-        // For each interface, create path candidates
-        for interface in interfaces {
-            // Create candidates for each protocol stack
-            if preconnection.transportProperties.reliability == .require {
-                // TCP candidates
-                let tcpCandidate = PathCandidate(
-                    interface: interface,
-                    remoteEndpoint: preconnection.remoteEndpoints.first,
-                    protocolStack: ProtocolStack(layers: [.tcp])
+        // Create local candidates from interfaces and local endpoints
+        for localEndpoint in preconnection.localEndpoints {
+            // Find matching interface or use all interfaces
+            let matchingInterfaces = localEndpoint.interface != nil
+                ? interfaces.filter { $0.name == localEndpoint.interface }
+                : interfaces
+            
+            for interface in matchingInterfaces {
+                // Use the interface addresses directly - they're already SocketAddress
+                let localCandidate = LocalCandidate(
+                    endpoint: localEndpoint,
+                    addresses: interface.addresses,
+                    interface: interface
                 )
-                candidates.pathCandidates.append(tcpCandidate)
-            } else if preconnection.transportProperties.reliability == .prohibit {
-                // UDP candidates
-                let udpCandidate = PathCandidate(
-                    interface: interface,
-                    remoteEndpoint: preconnection.remoteEndpoints.first,
-                    protocolStack: ProtocolStack(layers: [.udp])
-                )
-                candidates.pathCandidates.append(udpCandidate)
-            } else {
-                // Both TCP and UDP candidates
-                let tcpCandidate = PathCandidate(
-                    interface: interface,
-                    remoteEndpoint: preconnection.remoteEndpoints.first,
-                    protocolStack: ProtocolStack(layers: [.tcp])
-                )
-                let udpCandidate = PathCandidate(
-                    interface: interface,
-                    remoteEndpoint: preconnection.remoteEndpoints.first,
-                    protocolStack: ProtocolStack(layers: [.udp])
-                )
-                candidates.pathCandidates.append(tcpCandidate)
-                candidates.pathCandidates.append(udpCandidate)
+                localCandidates.append(localCandidate)
             }
         }
         
-        return candidates
+        // If no local endpoints specified, create candidates from all interfaces
+        if preconnection.localEndpoints.isEmpty {
+            for interface in interfaces {
+                let localEndpoint = LocalEndpoint()
+                let localCandidate = LocalCandidate(
+                    endpoint: localEndpoint,
+                    addresses: interface.addresses,
+                    interface: interface
+                )
+                localCandidates.append(localCandidate)
+            }
+        }
+        
+        // Create remote candidates from remote endpoints
+        for (index, remoteEndpoint) in preconnection.remoteEndpoints.enumerated() {
+            // For now, create a simple remote candidate
+            // In real implementation would resolve hostnames to addresses
+            var addresses: [SocketAddress] = []
+            
+            if let ipAddress = remoteEndpoint.ipAddress {
+                let port = remoteEndpoint.port ?? 0
+                if ipAddress.contains(":") {
+                    addresses.append(.ipv6(address: ipAddress, port: port, scopeId: 0))
+                } else {
+                    addresses.append(.ipv4(address: ipAddress, port: port))
+                }
+            }
+            
+            let remoteCandidate = RemoteCandidate(
+                endpoint: remoteEndpoint,
+                addresses: addresses,
+                priority: index
+            )
+            remoteCandidates.append(remoteCandidate)
+        }
+        
+        return CandidateSet(localCandidates: localCandidates, remoteCandidates: remoteCandidates)
     }
     
     public func isProtocolStackSupported(_ stack: ProtocolStack) -> Bool {
@@ -151,7 +170,7 @@ public final class LinuxPlatform: Platform {
                 if isLoopback {
                     type = .loopback
                 } else if name.hasPrefix("eth") || name.hasPrefix("en") {
-                    type = .wired
+                    type = .ethernet
                 } else if name.hasPrefix("wlan") || name.hasPrefix("wl") {
                     type = .wifi
                 } else {
@@ -159,8 +178,10 @@ public final class LinuxPlatform: Platform {
                 }
                 
                 // Get addresses for this interface
-                var addresses: [String] = []
+                var socketAddresses: [SocketAddress] = []
                 var tempCurrent = ifaddrs
+                var interfaceIndex = 0
+                
                 while let tempInterface = tempCurrent {
                     let tempName = String(cString: tempInterface.pointee.ifa_name)
                     if tempName == name {
@@ -171,7 +192,9 @@ public final class LinuxPlatform: Platform {
                                 var ipBuffer = Array<CChar>(repeating: 0, count: Int(INET_ADDRSTRLEN))
                                 var mutableAddr = sockaddrIn.sin_addr
                                 if inet_ntop(AF_INET, &mutableAddr, &ipBuffer, socklen_t(INET_ADDRSTRLEN)) != nil {
-                                    addresses.append(String(cString: ipBuffer))
+                                    let address = String(cString: ipBuffer)
+                                    let port = UInt16(bigEndian: sockaddrIn.sin_port)
+                                    socketAddresses.append(.ipv4(address: address, port: port))
                                 }
                             } else if addr.pointee.sa_family == sa_family_t(AF_INET6) {
                                 // IPv6 address
@@ -179,7 +202,10 @@ public final class LinuxPlatform: Platform {
                                 var ipBuffer = Array<CChar>(repeating: 0, count: Int(INET6_ADDRSTRLEN))
                                 var mutableAddr = sockaddrIn6.sin6_addr
                                 if inet_ntop(AF_INET6, &mutableAddr, &ipBuffer, socklen_t(INET6_ADDRSTRLEN)) != nil {
-                                    addresses.append(String(cString: ipBuffer))
+                                    let address = String(cString: ipBuffer)
+                                    let port = UInt16(bigEndian: sockaddrIn6.sin6_port)
+                                    let scopeId = sockaddrIn6.sin6_scope_id
+                                    socketAddresses.append(.ipv6(address: address, port: port, scopeId: scopeId))
                                 }
                             }
                         }
@@ -187,10 +213,19 @@ public final class LinuxPlatform: Platform {
                     tempCurrent = tempInterface.pointee.ifa_next
                 }
                 
+                // Check if interface supports multicast
+                let supportsMulticast = (flags & Int(IFF_MULTICAST)) != 0
+                
+                // Get interface index (simplified - in real implementation would use if_nametoindex)
+                interfaceIndex += 1
+                
                 let networkInterface = NetworkInterface(
                     name: name,
+                    index: interfaceIndex,
                     type: type,
-                    addresses: addresses
+                    addresses: socketAddresses,
+                    isUp: isUp,
+                    supportsMulticast: supportsMulticast
                 )
                 interfaces.append(networkInterface)
                 seenInterfaces.insert(name)
@@ -203,58 +238,6 @@ public final class LinuxPlatform: Platform {
     }
 }
 
-/// Network interface information
-public struct NetworkInterface: Sendable {
-    public let name: String
-    public let type: InterfaceType
-    public let addresses: [String]
-    
-    public enum InterfaceType: Sendable {
-        case wifi
-        case wired
-        case cellular
-        case loopback
-        case other
-    }
-}
-
-/// Candidate set for path selection
-public struct CandidateSet: Sendable {
-    public var pathCandidates: [PathCandidate] = []
-    
-    public init() {}
-}
-
-/// Path candidate for connection establishment
-public struct PathCandidate: Sendable {
-    public let interface: NetworkInterface
-    public let remoteEndpoint: RemoteEndpoint?
-    public let protocolStack: ProtocolStack
-    
-    public init(interface: NetworkInterface, remoteEndpoint: RemoteEndpoint?, protocolStack: ProtocolStack) {
-        self.interface = interface
-        self.remoteEndpoint = remoteEndpoint
-        self.protocolStack = protocolStack
-    }
-}
-
-/// Protocol stack definition
-public struct ProtocolStack: Sendable {
-    public let layers: [ProtocolLayer]
-    
-    public init(layers: [ProtocolLayer]) {
-        self.layers = layers
-    }
-}
-
-/// Protocol layer enumeration
-public enum ProtocolLayer: Sendable {
-    case tcp
-    case udp
-    case tls
-    case quic
-    case sctp
-    case custom(String)
-}
+// Network interface, CandidateSet, ProtocolStack and ProtocolLayer types are defined in common platform files
 
 #endif
