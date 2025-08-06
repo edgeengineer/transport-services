@@ -402,38 +402,40 @@ public final actor WindowsConnection: Connection {
     private func sendOverlapped(data: Data) async throws {
         // Implement overlapped send using IOCP
         // This is a simplified version
-        // Convert data to array to ensure it persists through the async operation
-        let dataArray = Array(data)
+        // Convert data to CChar array to match Windows API expectations
+        let dataArray = data.map { CChar(bitPattern: $0) }
         
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            var wsaBuf = WSABUF()
-            wsaBuf.len = ULONG(dataArray.count)
-            wsaBuf.buf = UnsafeMutablePointer(mutating: dataArray)
-            
-            // Create overlapped structure
-            var overlapped = OVERLAPPED()
-            var bytesSent: DWORD = 0
-            
-            let result = WSASend(
-                socket,
-                &wsaBuf,
-                1,
-                &bytesSent,
-                0,
-                &overlapped,
-                nil
-            )
-            
-            if result == SOCKET_ERROR {
-                let error = WindowsCompat.getLastSocketError()
-                if error == WSA_IO_PENDING {
-                    // I/O pending, will complete later
-                    continuation.resume()
+            dataArray.withUnsafeBufferPointer { buffer in
+                var wsaBuf = WSABUF()
+                wsaBuf.len = ULONG(buffer.count)
+                wsaBuf.buf = UnsafeMutablePointer(mutating: buffer.baseAddress)
+                
+                // Create overlapped structure
+                var overlapped = OVERLAPPED()
+                var bytesSent: DWORD = 0
+                
+                let result = WSASend(
+                    socket,
+                    &wsaBuf,
+                    1,
+                    &bytesSent,
+                    0,
+                    &overlapped,
+                    nil
+                )
+                
+                if result == SOCKET_ERROR {
+                    let error = WindowsCompat.getLastSocketError()
+                    if error == WSA_IO_PENDING {
+                        // I/O pending, will complete later
+                        continuation.resume()
+                    } else {
+                        continuation.resume(throwing: WindowsTransportError.sendFailed(error))
+                    }
                 } else {
-                    continuation.resume(throwing: WindowsTransportError.sendFailed(error))
+                    continuation.resume()
                 }
-            } else {
-                continuation.resume()
             }
         }
     }
@@ -443,42 +445,44 @@ public final actor WindowsConnection: Connection {
         var buffer = Array<CChar>(repeating: 0, count: bufferSize)
         
         return try await withCheckedThrowingContinuation { continuation in
-            var wsaBuf = WSABUF()
-            wsaBuf.len = ULONG(bufferSize)
-            wsaBuf.buf = UnsafeMutablePointer(&buffer)
-            
-            var overlapped = OVERLAPPED()
-            var bytesReceived: DWORD = 0
-            var flags: DWORD = 0
-            
-            let result = WSARecv(
-                socket,
-                &wsaBuf,
-                1,
-                &bytesReceived,
-                &flags,
-                &overlapped,
-                nil
-            )
-            
-            if result == SOCKET_ERROR {
-                let error = WindowsCompat.getLastSocketError()
-                if error == WSA_IO_PENDING {
-                    // I/O pending, will complete later
-                    // In a real implementation, we'd wait for IOCP notification
-                    Task {
-                        try await Task.sleep(nanoseconds: 10_000_000) // 10ms
-                        let data = Data(bytes: buffer, count: Int(bytesReceived))
-                        let context = MessageContext()
-                        continuation.resume(returning: (data, context))
+            buffer.withUnsafeMutableBufferPointer { bufferPointer in
+                var wsaBuf = WSABUF()
+                wsaBuf.len = ULONG(bufferSize)
+                wsaBuf.buf = bufferPointer.baseAddress
+                
+                var overlapped = OVERLAPPED()
+                var bytesReceived: DWORD = 0
+                var flags: DWORD = 0
+                
+                let result = WSARecv(
+                    socket,
+                    &wsaBuf,
+                    1,
+                    &bytesReceived,
+                    &flags,
+                    &overlapped,
+                    nil
+                )
+                
+                if result == SOCKET_ERROR {
+                    let error = WindowsCompat.getLastSocketError()
+                    if error == WSA_IO_PENDING {
+                        // I/O pending, will complete later
+                        // In a real implementation, we'd wait for IOCP notification
+                        Task {
+                            try await Task.sleep(nanoseconds: 10_000_000) // 10ms
+                            let data = Data(bytes: buffer, count: Int(bytesReceived))
+                            let context = MessageContext()
+                            continuation.resume(returning: (data, context))
+                        }
+                    } else {
+                        continuation.resume(throwing: WindowsTransportError.receiveFailed(error))
                     }
                 } else {
-                    continuation.resume(throwing: WindowsTransportError.receiveFailed(error))
+                    let data = Data(bytes: buffer, count: Int(bytesReceived))
+                    let context = MessageContext()
+                    continuation.resume(returning: (data, context))
                 }
-            } else {
-                let data = Data(bytes: buffer, count: Int(bytesReceived))
-                let context = MessageContext()
-                continuation.resume(returning: (data, context))
             }
         }
     }
