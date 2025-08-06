@@ -275,20 +275,20 @@ public class LinuxConnection: Connection, @unchecked Sendable {
     
     // MARK: - Endpoint Management
     
-    public func addRemote(_ remoteEndpoints: [RemoteEndpoint]) async {
+    public func addRemote(_ remoteEndpoints: [RemoteEndpoint]) {
         // Not implemented for basic Linux sockets
         // Would require SCTP or custom multipath implementation
     }
     
-    public func removeRemote(_ remoteEndpoints: [RemoteEndpoint]) async {
+    public func removeRemote(_ remoteEndpoints: [RemoteEndpoint]) {
         // Not implemented for basic Linux sockets
     }
     
-    public func addLocal(_ localEndpoints: [LocalEndpoint]) async {
-        // Not implemented for basic Linux sockets
+    public func addLocal(_ localEndpoints: [LocalEndpoint]) {
+        // Not implemented for basic Linux 
     }
     
-    public func removeLocal(_ localEndpoints: [LocalEndpoint]) async {
+    public func removeLocal(_ localEndpoints: [LocalEndpoint]) {
         // Not implemented for basic Linux sockets
     }
     

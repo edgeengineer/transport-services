@@ -17,7 +17,7 @@ import Foundation
 import Network
 
 /// Apple platform-specific connection implementation using Network.framework
-public actor AppleConnection: Connection {
+public final class AppleConnection: Connection {
     public let preconnection: Preconnection
     public let eventHandler: @Sendable (TransportServicesEvent) -> Void
     
@@ -196,22 +196,22 @@ public actor AppleConnection: Connection {
     
     // MARK: - Endpoint Management
     
-    public func addRemote(_ remoteEndpoints: [RemoteEndpoint]) async {
+    public func addRemote(_ remoteEndpoints: [RemoteEndpoint]) {
         // This would be implemented by Network.framework for multipath
         // For now, this is a placeholder
     }
     
-    public func removeRemote(_ remoteEndpoints: [RemoteEndpoint]) async {
+    public func removeRemote(_ remoteEndpoints: [RemoteEndpoint]) {
         // This would be implemented by Network.framework for multipath
         // For now, this is a placeholder
     }
     
-    public func addLocal(_ localEndpoints: [LocalEndpoint]) async {
+    public func addLocal(_ localEndpoints: [LocalEndpoint]) {
         // This would be implemented by Network.framework for multipath
         // For now, this is a placeholder
     }
     
-    public func removeLocal(_ localEndpoints: [LocalEndpoint]) async {
+    public func removeLocal(_ localEndpoints: [LocalEndpoint]) {
         // This would be implemented by Network.framework for multipath
         // For now, this is a placeholder
     }

@@ -12,7 +12,6 @@ import FoundationEssentials
 import Foundation
 #endif
 #endif
-
 /// Platform-specific implementation of the Transport Services API
 public protocol Platform: Sendable {
     /// Create a connection object for this platform

@@ -53,7 +53,7 @@ public final class WindowsPreconnection: Preconnection, @unchecked Sendable {
         let startTime = Date()
         let timeoutInterval = timeout ?? transportProperties.connTimeout ?? 30.0
         
-        while await connection.state == .establishing {
+        while connection.state == .establishing {
             if Date().timeIntervalSince(startTime) > timeoutInterval {
                 connection.close()
                 throw TransportServicesError.timedOut
@@ -63,7 +63,7 @@ public final class WindowsPreconnection: Preconnection, @unchecked Sendable {
         
         // Return the connection even if it's closed - tests may want to inspect it
         // Only throw if we're still establishing after timeout (which shouldn't happen due to loop above)
-        _ = await connection.state
+        _ = connection.state
         
         return connection
     }

@@ -8,27 +8,102 @@
 #if os(Windows)
 import WinSDK
 import Foundation
+import Synchronization
+
+@usableFromInline
+internal final class UnsafeSendable<T>: @unchecked Sendable {
+    internal let value: UnsafeMutablePointer<T>
+
+    internal init(_ value: T) {
+        self.value = UnsafeMutablePointer<T>.allocate(capacity: 1)
+        self.value.initialize(to: value)
+    }
+
+    deinit {
+        value.deinitialize(count: 1)
+        value.deallocate()
+    }
+}
 
 /// Windows platform-specific connection implementation using Winsock2 and IOCP
-public final actor WindowsConnection: Connection {
+public final class WindowsConnection: Connection {
     public let preconnection: Preconnection
     public nonisolated let eventHandler: @Sendable (TransportServicesEvent) -> Void
     
-    internal var socket: SOCKET = INVALID_SOCKET
-    public internal(set) var state: ConnectionState = .establishing
-    public private(set) var group: ConnectionGroup?
-    public private(set) var properties: TransportProperties
+    private let protectedState: Mutex<(
+        socket: SOCKET,
+        state: ConnectionState,
+        group: ConnectionGroup?,
+        properties: TransportProperties,
+        sendOverlapped: UnsafeSendable<OVERLAPPED?>?,
+        recvOverlapped: UnsafeSendable<OVERLAPPED?>?,
+        receiveBuffer: Data,
+        initialData: Data?
+    )>
+    
+    internal var socket: SOCKET {
+        get { protectedState.withLock { $0.socket } }
+        set { protectedState.withLock { $0.socket = newValue } }
+    }
+    
+    public internal(set) var state: ConnectionState {
+        get { protectedState.withLock { $0.state } }
+        set { protectedState.withLock { $0.state = newValue } }
+    }
+    
+    public private(set) var group: ConnectionGroup? {
+        get { protectedState.withLock { $0.group } }
+        set { protectedState.withLock { $0.group = newValue } }
+    }
+    
+    public private(set) var properties: TransportProperties {
+        get { protectedState.withLock { $0.properties } }
+        set { protectedState.withLock { $0.properties = newValue } }
+    }
     
     // IOCP-specific data
-    private var sendOverlapped: OVERLAPPED?
-    private var recvOverlapped: OVERLAPPED?
-    private var receiveBuffer = Data()
+    private var sendOverlapped: OVERLAPPED? {
+        get { protectedState.withLock { $0.sendOverlapped?.value.pointee } }
+        set { protectedState.withLock {
+            if let newValue = newValue {
+                $0.sendOverlapped = UnsafeSendable(newValue)
+            } else {
+                $0.sendOverlapped = nil
+            }
+        }}
+    }
+    private var recvOverlapped: OVERLAPPED? {
+        get { protectedState.withLock { $0.recvOverlapped?.value.pointee } }
+        set { protectedState.withLock {
+            if let newValue = newValue {
+                $0.recvOverlapped = UnsafeSendable(newValue)
+            } else {
+                $0.recvOverlapped = nil
+            }
+        }}
+    }
+    private var receiveBuffer: Data {
+        get { protectedState.withLock { $0.receiveBuffer } }
+        set { protectedState.withLock { $0.receiveBuffer = newValue } }
+    }
     private let maxBufferSize = 65536
     
     public init(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
         self.preconnection = preconnection
         self.eventHandler = eventHandler
-        self.properties = preconnection.transportProperties
+        
+        self.protectedState = Mutex(
+            (
+                socket: INVALID_SOCKET,
+                state: .establishing,
+                group: nil,
+                properties: preconnection.transportProperties,
+                sendOverlapped: nil,
+                recvOverlapped: nil,
+                receiveBuffer: Data(),
+                initialData: nil
+            )
+        )
         
         // Initialize Winsock if not already done
         WindowsCompat.initializeWinsock()
@@ -99,13 +174,7 @@ public final actor WindowsConnection: Connection {
         }
     }
     
-    nonisolated public func close() {
-        Task {
-            await self.closeInternal()
-        }
-    }
-
-    private func closeInternal() {
+    public func close() {
         guard state != .closed else { return }
         
         state = .closing
@@ -124,13 +193,7 @@ public final actor WindowsConnection: Connection {
         eventHandler(.closed(self))
     }
     
-    nonisolated public func abort() {
-        Task {
-            await self.abortInternal()
-        }
-    }
-    
-    private func abortInternal() {
+    public func abort() {
         // Send abort event even if already closed for test compatibility
         let wasAlreadyClosed = state == .closed
         
@@ -317,7 +380,10 @@ public final actor WindowsConnection: Connection {
     }
     
     /// Set initial data received (used for UDP connections)
-    private var initialData: Data?
+    private var initialData: Data? {
+        get { protectedState.withLock { $0.initialData } }
+        set { protectedState.withLock { $0.initialData = newValue } }
+    }
     public func setInitialData(_ data: Data) {
         self.initialData = data
     }

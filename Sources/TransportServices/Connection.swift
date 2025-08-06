@@ -57,16 +57,16 @@ public protocol Connection: Sendable {
     // MARK: - Endpoint Management
     
     /// Add remote endpoints for multipath or migration
-    func addRemote(_ remoteEndpoints: [RemoteEndpoint]) async
+    func addRemote(_ remoteEndpoints: [RemoteEndpoint])
     
     /// Remove remote endpoints
-    func removeRemote(_ remoteEndpoints: [RemoteEndpoint]) async
+    func removeRemote(_ remoteEndpoints: [RemoteEndpoint])
     
     /// Add local endpoints for multipath or migration
-    func addLocal(_ localEndpoints: [LocalEndpoint]) async
+    func addLocal(_ localEndpoints: [LocalEndpoint])
     
     /// Remove local endpoints
-    func removeLocal(_ localEndpoints: [LocalEndpoint]) async
+    func removeLocal(_ localEndpoints: [LocalEndpoint])
     
     // MARK: - Connection Groups
     
