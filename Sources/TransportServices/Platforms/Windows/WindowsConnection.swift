@@ -229,7 +229,7 @@ public final actor WindowsConnection: Connection {
             throw TransportServicesError.connectionClosed
         }
         
-        let data = Data(bytes: buffer, count: Int(result))
+        let data = Data(buffer.prefix(Int(result)).map { UInt8(bitPattern: $0) })
         let context = MessageContext()
         
         eventHandler(.received(self, data, context))
@@ -485,7 +485,7 @@ public final actor WindowsConnection: Connection {
                             // Note: In a real implementation, bytesReceived would be updated by IOCP
                             // For now, assume some data was received
                             let assumedBytesReceived = min(1024, bufferSize)
-                            let data = Data(mutableBuffer.prefix(assumedBytesReceived))
+                            let data = Data(mutableBuffer.prefix(assumedBytesReceived).map { UInt8(bitPattern: $0) })
                             let context = MessageContext()
                             continuation.resume(returning: (data, context))
                         }
@@ -493,7 +493,7 @@ public final actor WindowsConnection: Connection {
                         continuation.resume(throwing: WindowsTransportError.receiveFailed(error))
                     }
                 } else {
-                    let data = Data(mutableBuffer.prefix(Int(bytesReceived)))
+                    let data = Data(mutableBuffer.prefix(Int(bytesReceived)).map { UInt8(bitPattern: $0) })
                     let context = MessageContext()
                     continuation.resume(returning: (data, context))
                 }
