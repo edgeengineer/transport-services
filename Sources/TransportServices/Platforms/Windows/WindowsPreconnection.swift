@@ -97,7 +97,7 @@ public final class WindowsPreconnection: Preconnection, @unchecked Sendable {
         throw TransportServicesError.notSupported(reason: "Rendezvous not implemented on Windows")
     }
     
-    public mutating func addRemote(_ remoteEndpoints: [RemoteEndpoint]) {
+    public func addRemote(_ remoteEndpoints: [RemoteEndpoint]) {
         self.remoteEndpoints.append(contentsOf: remoteEndpoints)
     }
     

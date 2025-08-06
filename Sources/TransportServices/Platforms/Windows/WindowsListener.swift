@@ -301,7 +301,7 @@ public final actor WindowsListener: Listener {
     }
     
     private func createRemoteEndpoint(from addr: sockaddr_in) -> RemoteEndpoint {
-        let endpoint = RemoteEndpoint()
+        var endpoint = RemoteEndpoint()
         
         // Convert IP address to string
         var mutableAddr = addr

@@ -254,8 +254,8 @@ internal struct WindowsCompat {
         }
         
         // Parse the adapter information
-        buffer.withUnsafeBytes { ptr in
-            var adapter: UnsafePointer<IP_ADAPTER_ADDRESSES>? = ptr.bindMemory(to: IP_ADAPTER_ADDRESSES.self).baseAddress
+        buffer.withUnsafeMutableBytes { ptr in
+            var adapter: UnsafeMutablePointer<IP_ADAPTER_ADDRESSES>? = ptr.bindMemory(to: IP_ADAPTER_ADDRESSES.self).baseAddress
             
             while let currentAdapter = adapter {
                 let name = String(cString: currentAdapter.pointee.AdapterName)
