@@ -12,9 +12,15 @@ import Foundation
 /// Windows compatibility layer for networking
 internal struct WindowsCompat {
     
+    // MARK: - Type Aliases
+    
+    typealias SOCKET = WinSDK.SOCKET
+    typealias DWORD = WinSDK.DWORD
+    typealias LPOVERLAPPED = UnsafeMutablePointer<WinSDK.OVERLAPPED>
+    
     // MARK: - Winsock Initialization
     
-    private static var wsaInitialized = false
+    nonisolated(unsafe) private static var wsaInitialized = false
     private static let wsaLock = NSLock()
     
     /// Initialize Winsock
@@ -25,7 +31,7 @@ internal struct WindowsCompat {
         guard !wsaInitialized else { return }
         
         var wsaData = WSADATA()
-        let version = MAKEWORD(2, 2) // Request Winsock 2.2
+        let version = WinSDK.MAKEWORD(2, 2) // Request Winsock 2.2
         let result = WSAStartup(version, &wsaData)
         
         if result != 0 {
@@ -124,7 +130,7 @@ internal struct WindowsCompat {
         if let address = address {
             inet_pton(AF_INET, address, &addr.sin_addr)
         } else {
-            addr.sin_addr.s_addr = INADDR_ANY
+            addr.sin_addr.S_un.S_addr = INADDR_ANY
         }
         
         return addr
@@ -151,7 +157,7 @@ internal struct WindowsCompat {
         let bufferSize = family == AF_INET ? Int(INET_ADDRSTRLEN) : Int(INET6_ADDRSTRLEN)
         var buffer = [CChar](repeating: 0, count: bufferSize)
         
-        if inet_ntop(family, addr, &buffer, socklen_t(bufferSize)) != nil {
+        if inet_ntop(family, addr, &buffer, Int(bufferSize)) != nil {
             return String(cString: buffer)
         }
         return nil

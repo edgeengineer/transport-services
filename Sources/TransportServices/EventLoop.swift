@@ -55,22 +55,22 @@ internal final class EventLoop: @unchecked Sendable {
     
     #if os(Windows)
     /// Associate a socket with the IOCP (Windows only)
-    internal static func associateSocket(_ socket: SOCKET, handler: @escaping (DWORD) -> Void) -> Bool {
+    internal static func associateSocket(_ socket: WindowsCompat.SOCKET, handler: @escaping (WindowsCompat.DWORD) -> Void) -> Bool {
         singleton.platformLoop.associateSocket(socket, handler: handler)
     }
     
     /// Disassociate a socket from the IOCP (Windows only)
-    internal static func disassociateSocket(_ socket: SOCKET) {
+    internal static func disassociateSocket(_ socket: WindowsCompat.SOCKET) {
         singleton.platformLoop.disassociateSocket(socket)
     }
     
     /// Post an I/O completion for a socket (Windows only)
-    internal static func postSocketCompletion(_ socket: SOCKET, bytes: DWORD = 0) {
+    internal static func postSocketCompletion(_ socket: WindowsCompat.SOCKET, bytes: WindowsCompat.DWORD = 0) {
         singleton.platformLoop.postSocketCompletion(socket, bytes: bytes)
     }
     
     /// Submit an overlapped I/O operation (Windows only)
-    internal static func submitOverlappedIO(_ socket: SOCKET, overlapped: LPOVERLAPPED) {
+    internal static func submitOverlappedIO(_ socket: WindowsCompat.SOCKET, overlapped: WindowsCompat.LPOVERLAPPED) {
         singleton.platformLoop.submitOverlappedIO(socket, overlapped: overlapped)
     }
     #endif
