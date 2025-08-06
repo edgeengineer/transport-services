@@ -69,12 +69,17 @@ public final actor WindowsListener: Listener {
             }
             
             // Associate socket with IOCP
-            guard EventLoop.associateSocket(listenSocket) else {
+            guard EventLoop.associateSocket(listenSocket, handler: { [weak self] _ in
+                // Handle accept events
+                Task { [weak self] in
+                    await self?.acceptConnections()
+                }
+            }) else {
                 throw WindowsTransportError.iocpError(GetLastError())
             }
             
             state = .ready
-            eventHandler(.listenerReady(self))
+            // Note: No specific event for listener becoming ready
             
             // Start accepting connections
             startAccepting()
@@ -85,7 +90,7 @@ public final actor WindowsListener: Listener {
                 closesocket(listenSocket)
                 listenSocket = INVALID_SOCKET
             }
-            eventHandler(.listenerError(self, reason: error.localizedDescription))
+            eventHandler(.stopped(self))
             throw error
         }
     }
@@ -100,7 +105,7 @@ public final actor WindowsListener: Listener {
             listenSocket = INVALID_SOCKET
         }
         
-        eventHandler(.listenerClosed(self))
+        eventHandler(.stopped(self))
     }
     
     public func setNewConnectionLimit(_ value: UInt?) {
@@ -338,7 +343,9 @@ private actor WindowsAcceptedConnection: WindowsConnection {
         self.state = .established
         
         // Associate with IOCP
-        _ = EventLoop.associateSocket(socket)
+        _ = EventLoop.associateSocket(socket, handler: { _ in
+            // UDP socket handler - no specific action needed here
+        })
         
         // Notify ready
         eventHandler(.ready(self))

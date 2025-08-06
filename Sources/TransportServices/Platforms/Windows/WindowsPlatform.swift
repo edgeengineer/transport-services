@@ -93,21 +93,21 @@ public final class WindowsPlatform: Platform {
     // MARK: - Private Helper Methods
     
     private func createProtocolStack(for properties: TransportProperties) -> ProtocolStack {
-        let stack = ProtocolStack()
+        var layers: [ProtocolLayer] = []
         
         // Add transport layer
         if properties.reliability == .require {
-            stack.addLayer(.tcp)
+            layers.append(.tcp)
         } else {
-            stack.addLayer(.udp)
+            layers.append(.udp)
         }
         
         // Add security layer if needed (future implementation)
         // if properties.requiresEncryption {
-        //     stack.addLayer(.tls)
+        //     layers.append(.tls)
         // }
         
-        return stack
+        return ProtocolStack(layers: layers)
     }
 }
 

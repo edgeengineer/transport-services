@@ -58,7 +58,7 @@ public final class WindowsPreconnection: Preconnection, @unchecked Sendable {
             do {
                 try await listener.listen()
             } catch {
-                eventHandler(.listenerError(listener, reason: error.localizedDescription))
+                eventHandler(.stopped(listener))
             }
         }
         
@@ -104,10 +104,11 @@ public final class WindowsPreconnection: Preconnection, @unchecked Sendable {
             if let reliability = value as? Preference {
                 transportProperties.reliability = reliability
             }
-        case "ordering":
-            if let ordering = value as? Preference {
-                transportProperties.ordering = ordering
-            }
+        // Note: ordering property doesn't exist in TransportProperties
+        // case "ordering":
+        //     if let ordering = value as? Preference {
+        //         transportProperties.ordering = ordering
+        //     }
         case "congestionControl":
             if let congestionControl = value as? Preference {
                 transportProperties.congestionControl = congestionControl
