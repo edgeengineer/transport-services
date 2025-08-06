@@ -25,7 +25,7 @@ struct ConnectionTests {
         )
         preconnection.transportProperties.connTimeout = 1.0 // 1 second timeout
         
-        let connection = try await withTimeout(.seconds(5), operation: "connection initiation") { [preconnection] in
+        let connection = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate { event in
                 Task { await eventCollector.add(event) }
             }
@@ -44,7 +44,7 @@ struct ConnectionTests {
         
         // If connection was closed, we should have received an error or closed event
         if initialState == .closed {
-            try await withTimeout(.seconds(2), operation: "waiting for error event") {
+            try await withTimeout(in: .seconds(2), clock: ContinuousClock()) {
                 let events = await eventCollector.events
                 let hasError = events.contains { event in
                     if case .connectionError = event { return true }
@@ -56,7 +56,7 @@ struct ConnectionTests {
         }
         
         // Should have received closed event (after we closed the connection)
-        try await withTimeout(.seconds(2), operation: "waiting for closed event") {
+        try await withTimeout(in: .seconds(2), clock: ContinuousClock()) {
             let hasClosed = await eventCollector.hasClosedEvent()
             #expect(hasClosed == true)
         }
@@ -71,7 +71,7 @@ struct ConnectionTests {
         )
         preconnection.transportProperties.connTimeout = 1.0 // 1 second timeout
         
-        let connection = try await withTimeout(.seconds(5), operation: "connection initiation") { [preconnection] in
+        let connection = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate { event in
                 Task { await eventCollector.add(event) }
             }
@@ -118,7 +118,7 @@ struct ConnectionTests {
         // Set a reasonable timeout
         preconnection.transportProperties.connTimeout = 10
         
-        let connection = try await withTimeout(.seconds(10), operation: "connection to httpbin") { [preconnection] in
+        let connection = try await withTimeout(in: .seconds(10), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate { event in
                 Task { await eventCollector.add(event) }
             }
@@ -141,12 +141,12 @@ struct ConnectionTests {
         let messageContext = MessageContext()
         let requestData = Data(request.utf8)
         
-        try await withTimeout(.seconds(5), operation: "sending data") {
+        try await withTimeout(in: .seconds(5), clock: ContinuousClock()) {
             try await connection.send(data: requestData, context: messageContext)
         }
         
         // Should have sent event
-        try await withTimeout(.seconds(2), operation: "waiting for sent event") {
+        try await withTimeout(in: .seconds(2), clock: ContinuousClock()) {
             let events = await eventCollector.events
             let hasSent = events.contains { event in
                 if case .sent = event { return true }
@@ -156,7 +156,7 @@ struct ConnectionTests {
         }
         
         // Receive response
-        let (responseData, _) = try await withTimeout(.seconds(5), operation: "receiving data") {
+        let (responseData, _) = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) {
             try await connection.receive(maxLength: 8192)
         }
         
@@ -165,7 +165,7 @@ struct ConnectionTests {
         #expect(response.contains("200"))
         
         // Should have received event
-        try await withTimeout(.seconds(2), operation: "waiting for received event") {
+        try await withTimeout(in: .seconds(2), clock: ContinuousClock()) {
             let events = await eventCollector.events
             let hasReceived = events.contains { event in
                 if case .received = event { return true }
@@ -184,7 +184,7 @@ struct ConnectionTests {
         )
         preconnection.transportProperties.connTimeout = 1.0 // 1 second timeout
         
-        let connection = try await withTimeout(.seconds(5), operation: "connection initiation") { [preconnection] in
+        let connection = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate()
         }
         
@@ -213,7 +213,7 @@ struct ConnectionTests {
         )
         preconnection.transportProperties.connTimeout = 1.0 // 1 second timeout
         
-        let connection = try await withTimeout(.seconds(5), operation: "connection initiation") { [preconnection] in
+        let connection = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate()
         }
         
@@ -246,7 +246,7 @@ struct ConnectionTests {
         // Set a reasonable timeout
         preconnection.transportProperties.connTimeout = 10
         
-        let connection = try await withTimeout(.seconds(10), operation: "connection initiation") { [preconnection] in
+        let connection = try await withTimeout(in: .seconds(10), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate { event in
                 Task { await eventCollector.add(event) }
             }
@@ -264,7 +264,7 @@ struct ConnectionTests {
         try await connection.send(data: Data(request.utf8))
         
         // Receive with small buffer to test partial receives
-        let (partialData, _) = try await withTimeout(.seconds(5), operation: "partial receive") {
+        let (partialData, _) = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) {
             try await connection.receive(minIncompleteLength: 1, maxLength: 64)
         }
         
@@ -288,7 +288,7 @@ struct ConnectionTests {
         preconnection.transportProperties.connPriority = 100
         preconnection.transportProperties.connTimeout = 30
         
-        let connection = try await withTimeout(.seconds(5), operation: "connection initiation") { [preconnection] in
+        let connection = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate()
         }
         
@@ -308,7 +308,7 @@ struct ConnectionTests {
         )
         preconnection.transportProperties.connTimeout = 1.0 // 1 second timeout
         
-        let connection = try await withTimeout(.seconds(5), operation: "connection initiation") { [preconnection] in
+        let connection = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate()
         }
         
@@ -340,15 +340,15 @@ struct ConnectionTests {
         )
         preconnection.transportProperties.connTimeout = 1.0 // 1 second timeout
         
-        let connection1 = try await withTimeout(.seconds(5), operation: "connection initiation") { [preconnection] in
+        let connection1 = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate { event in
                 Task { await eventCollector1.add(event) }
             }
         }
         
-        // Connection might be establishing or closed
+        // Connection might be establishing, established, or closed
         let state = await connection1.state
-        if state == .establishing {
+        if state != .closed {
             await connection1.close()
             try await connection1.waitForState(.closed)
         }
@@ -417,11 +417,11 @@ struct ConnectionTests {
         )
         preconnection.transportProperties.connTimeout = 1.0 // 1 second timeout
         
-        let connection1 = try await withTimeout(.seconds(5), operation: "connection 1") { [preconnection] in
+        let connection1 = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate()
         }
         
-        let connection2 = try await withTimeout(.seconds(5), operation: "connection 2") { [preconnection] in
+        let connection2 = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate()
         }
         
@@ -456,7 +456,7 @@ struct ConnectionTests {
         )
         preconnection.transportProperties.connTimeout = 1.0 // 1 second timeout
         
-        let connection = try await withTimeout(.seconds(5), operation: "connection initiation") { [preconnection] in
+        let connection = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate()
         }
         
@@ -498,7 +498,7 @@ struct ConnectionTests {
         // Set a reasonable timeout
         preconnection.transportProperties.connTimeout = 10
         
-        let connection = try await withTimeout(.seconds(10), operation: "connection initiation") { [preconnection] in
+        let connection = try await withTimeout(in: .seconds(10), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate { event in
                 Task { await eventCollector.add(event) }
             }
@@ -519,7 +519,7 @@ struct ConnectionTests {
         try await connection.send(data: Data(request.utf8))
         
         // Wait for receive events
-        try await withTimeout(.seconds(5), operation: "waiting for receive events") {
+        try await withTimeout(in: .seconds(5), clock: ContinuousClock()) {
             try await waitForCondition {
                 let events = await eventCollector.events
                 return events.contains { event in
@@ -544,7 +544,7 @@ struct ConnectionTests {
         )
         preconnection.transportProperties.connTimeout = 1.0 // 1 second timeout
         
-        let connection = try await withTimeout(.seconds(5), operation: "connection initiation") { [preconnection] in
+        let connection = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate { event in
                 Task { await eventCollector.add(event) }
             }
@@ -575,7 +575,7 @@ struct ConnectionTests {
         )
         preconnection.transportProperties.connTimeout = 1.0 // 1 second timeout
         
-        let connection = try await withTimeout(.seconds(5), operation: "connection initiation") { [preconnection] in
+        let connection = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate { event in
                 Task { await eventCollector.add(event) }
             }
