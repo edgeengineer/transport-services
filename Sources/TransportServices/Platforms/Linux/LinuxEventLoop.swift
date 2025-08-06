@@ -168,8 +168,8 @@ internal final class LinuxEventLoop: @unchecked Sendable {
     
     /// Unregister a socket from monitoring
     func unregisterSocket(_ fd: Int32) {
-        epoll_ctl(epollFd, LinuxCompat.EPOLL_CTL_DEL, fd, nil)
-        handlersLock.withLock {
+        _ = epoll_ctl(epollFd, LinuxCompat.EPOLL_CTL_DEL, fd, nil)
+        _ = handlersLock.withLock {
             socketHandlers.removeValue(forKey: fd)
         }
     }

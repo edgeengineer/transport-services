@@ -92,7 +92,9 @@ internal struct LinuxCompat {
         // Use strerror_r for thread safety in Glibc
         var buffer = [CChar](repeating: 0, count: 256)
         _ = strerror_r(errno, &buffer, buffer.count)
-        return String(cString: buffer)
+        // Find the null terminator
+        let validLength = buffer.firstIndex(of: 0) ?? buffer.count
+        return String(decoding: buffer[..<validLength], as: UTF8.self)
         #endif
     }
     
