@@ -199,7 +199,7 @@ public final actor WindowsListener: Listener {
     }
     
     private func acceptTCPConnection() async {
-        var clientAddr = sockaddr_in()
+        let clientAddr = sockaddr_in()
         var addrLen = Int32(MemoryLayout<sockaddr_in>.size)
         
         var mutableAddr = clientAddr
@@ -220,7 +220,7 @@ public final actor WindowsListener: Listener {
         }
         
         // Set non-blocking mode for client socket
-        WindowsCompat.setNonBlocking(clientSocket)
+        _ = WindowsCompat.setNonBlocking(clientSocket)
         
         // Create remote endpoint from client address
         let remoteEndpoint = createRemoteEndpoint(from: mutableAddr)
@@ -258,7 +258,7 @@ public final actor WindowsListener: Listener {
         // Instead, we could handle incoming datagrams and create virtual connections
         
         var buffer = Array<CChar>(repeating: 0, count: 65536)
-        var clientAddr = sockaddr_in()
+        let clientAddr = sockaddr_in()
         var addrLen = Int32(MemoryLayout<sockaddr_in>.size)
         
         var mutableAddr = clientAddr

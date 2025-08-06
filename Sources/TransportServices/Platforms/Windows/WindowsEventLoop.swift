@@ -164,7 +164,7 @@ internal final class WindowsEventLoop: @unchecked Sendable {
         
         if result != nil && result != INVALID_HANDLE_VALUE {
             handlersLock.withLock {
-                var context = SocketContext(
+                let context = SocketContext(
                     socket: socket,
                     handler: handler,
                     overlapped: OVERLAPPED()
@@ -178,7 +178,7 @@ internal final class WindowsEventLoop: @unchecked Sendable {
     
     /// Disassociate a socket from the IOCP
     func disassociateSocket(_ socket: SOCKET) {
-        handlersLock.withLock {
+        _ = handlersLock.withLock {
             socketHandlers.removeValue(forKey: socket)
         }
     }

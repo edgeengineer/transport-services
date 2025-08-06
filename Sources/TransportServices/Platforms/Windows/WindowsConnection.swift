@@ -469,9 +469,12 @@ public final actor WindowsConnection: Connection {
                     if error == WSA_IO_PENDING {
                         // I/O pending, will complete later
                         // In a real implementation, we'd wait for IOCP notification
+                        // Capture values before the async task
+                        let capturedBuffer = buffer
+                        let capturedBytesReceived = bytesReceived
                         Task { @Sendable in
                             try await Task.sleep(nanoseconds: 10_000_000) // 10ms
-                            let data = Data(bytes: buffer, count: Int(bytesReceived))
+                            let data = Data(bytes: capturedBuffer, count: Int(capturedBytesReceived))
                             let context = MessageContext()
                             continuation.resume(returning: (data, context))
                         }
