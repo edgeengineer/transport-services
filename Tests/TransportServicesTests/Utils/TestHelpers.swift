@@ -52,8 +52,7 @@ extension Connection {
         try await waitForCondition(
             timeout: timeout,
             operation: "waiting for connection state \(targetState)"
-        ) { [weak self] in
-            guard let self else { return false }
+        ) {
             return await self.state == targetState
         }
     }
@@ -69,16 +68,15 @@ extension Listener {
     func waitForConnection(
         timeout: Duration = .seconds(5)
     ) async throws -> UInt {
-        let initialCount = await self.getAcceptedConnectionCount()
+        let initialCount = await self.acceptedConnectionCount
         
         try await waitForCondition(
             timeout: timeout,
             operation: "waiting for connection acceptance"
-        ) { [weak self] in
-            guard let self else { return false }
-            return await self.getAcceptedConnectionCount() > initialCount
+        ) {
+            return await self.acceptedConnectionCount > initialCount
         }
         
-        return await self.getAcceptedConnectionCount()
+        return await self.acceptedConnectionCount
     }
 }
