@@ -134,7 +134,7 @@ extension Listener {
     func waitForConnection(
         timeout: Duration = .seconds(5)
     ) async throws -> UInt {
-        let initialCount = self.getAcceptedConnectionCount()
+        let initialCount = await self.getAcceptedConnectionCount()
         
         try await waitForCondition(
             timeout: timeout,
@@ -144,6 +144,6 @@ extension Listener {
             return await self.getAcceptedConnectionCount() > initialCount
         }
         
-        return self.getAcceptedConnectionCount()
+        return await self.getAcceptedConnectionCount()
     }
 }

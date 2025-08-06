@@ -60,7 +60,7 @@ public final class AppleListener: Listener, @unchecked Sendable {
             guard let self = self else { return }
             
             Task {
-                await self.handleStateUpdate(newState)
+                self.handleStateUpdate(newState)
             }
         }
         
@@ -68,7 +68,7 @@ public final class AppleListener: Listener, @unchecked Sendable {
             guard let self = self else { return }
             
             Task {
-                await self.addPendingConnection(nwConnection)
+                self.addPendingConnection(nwConnection)
             }
         }
     }
@@ -110,18 +110,18 @@ public final class AppleListener: Listener, @unchecked Sendable {
                 switch state {
                 case .ready:
                     Task {
-                        await self.handleStateUpdate(state)
-                        await self.setupHandlers() // Re-setup normal handlers
+                        self.handleStateUpdate(state)
+                        self.setupHandlers() // Re-setup normal handlers
                     }
                     continuation.resume()
                 case .failed(let error):
                     Task {
-                        await self.handleStateUpdate(state)
+                        self.handleStateUpdate(state)
                     }
                     continuation.resume(throwing: error)
                 default:
                     Task {
-                        await self.handleStateUpdate(state)
+                        self.handleStateUpdate(state)
                     }
                 }
             }
