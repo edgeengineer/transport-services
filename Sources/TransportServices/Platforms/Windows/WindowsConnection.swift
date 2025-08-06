@@ -45,7 +45,7 @@ public final actor WindowsConnection: Connection {
     /// Initiate the connection
     public func initiate() async {
         guard let remoteEndpoint = preconnection.remoteEndpoints.first else {
-            eventHandler(.establishmentError(self, reason: "No remote endpoint specified"))
+            eventHandler(.establishmentError(reason: "No remote endpoint specified"))
             return
         }
         
@@ -75,8 +75,8 @@ public final actor WindowsConnection: Connection {
             }
             
             // Associate socket with IOCP
-            guard EventLoop.associateSocket(socket) else {
-                throw WindowsTransportError.iocpError(GetLastError())
+            guard EventLoop.associateSocket(socket, handler: { _ in }) else {
+                throw WindowsTransportError.iocpError(Int32(GetLastError()))
             }
             
             // Connect to remote endpoint
@@ -91,7 +91,7 @@ public final actor WindowsConnection: Connection {
                 closesocket(socket)
                 socket = INVALID_SOCKET
             }
-            eventHandler(.establishmentError(self, reason: error.localizedDescription))
+            eventHandler(.establishmentError(reason: error.localizedDescription))
         }
     }
     
@@ -202,6 +202,14 @@ public final actor WindowsConnection: Connection {
             throw TransportServicesError.connectionClosed
         }
         
+        // If we have initial data (UDP case), return it first
+        if let data = initialData {
+            initialData = nil
+            let context = MessageContext()
+            eventHandler(.received(self, data, context))
+            return (data, context)
+        }
+        
         let bufferSize = min(maxLength ?? maxBufferSize, maxBufferSize)
         var buffer = Array<CChar>(repeating: 0, count: bufferSize)
         
@@ -263,28 +271,59 @@ public final actor WindowsConnection: Connection {
         // Not implemented for basic Windows sockets
     }
     
+    // MARK: - Methods for accepted connections
+    
+    /// Set an accepted socket directly (used by WindowsListener)
+    public func setAcceptedSocket(_ acceptedSocket: SOCKET) {
+        self.socket = acceptedSocket
+        self.state = .established
+        
+        // Associate with IOCP
+        _ = EventLoop.associateSocket(socket, handler: { _ in })
+    }
+    
+    /// Configure for UDP with shared socket (used by WindowsListener)
+    public func setUDPSocket(_ sharedSocket: SOCKET, remoteAddr: sockaddr_in) {
+        self.socket = sharedSocket
+        self.state = .established
+        // Store remote address for UDP sends
+        // Note: This would need proper implementation for UDP filtering
+    }
+    
+    /// Mark connection as established and send ready event
+    public func markEstablished() {
+        self.state = .established
+        eventHandler(.ready(self))
+    }
+    
+    /// Set initial data received (used for UDP connections)
+    private var initialData: Data?
+    public func setInitialData(_ data: Data) {
+        self.initialData = data
+    }
+    
     // MARK: - Private Helper Methods
     
     private func configureSocketOptions() {
         guard socket != INVALID_SOCKET else { return }
         
         // Enable SO_REUSEADDR
-        var reuseAddr: BOOL = TRUE
+        var reuseAddr: WinSDK.BOOL = TRUE
         setsockopt(socket, WindowsCompat.SOL_SOCKET, WindowsCompat.SO_REUSEADDR,
-                  &reuseAddr, Int32(MemoryLayout<BOOL>.size))
+                  &reuseAddr, Int32(MemoryLayout<WinSDK.BOOL>.size))
         
         // Configure keep-alive if requested
         if properties.keepAlive != .prohibit {
-            var keepAlive: BOOL = TRUE
+            var keepAlive: WinSDK.BOOL = TRUE
             setsockopt(socket, WindowsCompat.SOL_SOCKET, WindowsCompat.SO_KEEPALIVE,
-                      &keepAlive, Int32(MemoryLayout<BOOL>.size))
+                      &keepAlive, Int32(MemoryLayout<WinSDK.BOOL>.size))
         }
         
         // Configure TCP nodelay for low latency
         if properties.reliability == .require {
-            var nodelay: BOOL = TRUE
-            setsockopt(socket, IPPROTO_TCP, WindowsCompat.TCP_NODELAY,
-                      &nodelay, Int32(MemoryLayout<BOOL>.size))
+            var nodelay: WinSDK.BOOL = TRUE
+            setsockopt(socket, Int32(IPPROTO_TCP.rawValue), WindowsCompat.TCP_NODELAY,
+                      &nodelay, Int32(MemoryLayout<WinSDK.BOOL>.size))
         }
     }
     
@@ -400,44 +439,47 @@ public final actor WindowsConnection: Connection {
     }
     
     private func receiveOverlapped(bufferSize: Int) async throws -> (Data, MessageContext) {
-        try await withCheckedThrowingContinuation { continuation in
-            var buffer = Array<CChar>(repeating: 0, count: bufferSize)
-            var wsaBuf = WSABUF()
-            wsaBuf.len = ULONG(bufferSize)
-            wsaBuf.buf = &buffer
-            
-            var overlapped = OVERLAPPED()
-            var bytesReceived: DWORD = 0
-            var flags: DWORD = 0
-            
-            let result = WSARecv(
-                socket,
-                &wsaBuf,
-                1,
-                &bytesReceived,
-                &flags,
-                &overlapped,
-                nil
-            )
-            
-            if result == SOCKET_ERROR {
-                let error = WindowsCompat.getLastSocketError()
-                if error == WSA_IO_PENDING {
-                    // I/O pending, will complete later
-                    // In a real implementation, we'd wait for IOCP notification
-                    Task {
-                        try await Task.sleep(nanoseconds: 10_000_000) // 10ms
-                        let data = Data(bytes: buffer, count: Int(bytesReceived))
-                        let context = MessageContext()
-                        continuation.resume(returning: (data, context))
+        var buffer = Array<CChar>(repeating: 0, count: bufferSize)
+        
+        return try await buffer.withUnsafeMutableBufferPointer { bufferPtr in
+            try await withCheckedThrowingContinuation { continuation in
+                var wsaBuf = WSABUF()
+                wsaBuf.len = ULONG(bufferSize)
+                wsaBuf.buf = bufferPtr.baseAddress
+                
+                var overlapped = OVERLAPPED()
+                var bytesReceived: DWORD = 0
+                var flags: DWORD = 0
+                
+                let result = WSARecv(
+                    socket,
+                    &wsaBuf,
+                    1,
+                    &bytesReceived,
+                    &flags,
+                    &overlapped,
+                    nil
+                )
+                
+                if result == SOCKET_ERROR {
+                    let error = WindowsCompat.getLastSocketError()
+                    if error == WSA_IO_PENDING {
+                        // I/O pending, will complete later
+                        // In a real implementation, we'd wait for IOCP notification
+                        Task {
+                            try await Task.sleep(nanoseconds: 10_000_000) // 10ms
+                            let data = Data(bytes: bufferPtr.baseAddress!, count: Int(bytesReceived))
+                            let context = MessageContext()
+                            continuation.resume(returning: (data, context))
+                        }
+                    } else {
+                        continuation.resume(throwing: WindowsTransportError.receiveFailed(error))
                     }
                 } else {
-                    continuation.resume(throwing: WindowsTransportError.receiveFailed(error))
+                    let data = Data(bytes: bufferPtr.baseAddress!, count: Int(bytesReceived))
+                    let context = MessageContext()
+                    continuation.resume(returning: (data, context))
                 }
-            } else {
-                let data = Data(bytes: buffer, count: Int(bytesReceived))
-                let context = MessageContext()
-                continuation.resume(returning: (data, context))
             }
         }
     }
@@ -446,7 +488,7 @@ public final actor WindowsConnection: Connection {
 // Windows-specific constants
 private let WSAEWOULDBLOCK = Int32(10035)
 private let WSA_IO_PENDING = Int32(997)
-private let TRUE = BOOL(1)
-private let FALSE = BOOL(0)
+private let TRUE = WinSDK.BOOL(1)
+private let FALSE = WinSDK.BOOL(0)
 
 #endif

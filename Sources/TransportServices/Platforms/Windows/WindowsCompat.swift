@@ -95,8 +95,11 @@ internal struct WindowsCompat {
         
         if result > 0 {
             // Convert WCHAR buffer to String
-            let bufferPointer = UnsafeBufferPointer(start: buffer, count: Int(result))
-            return String(decoding: bufferPointer, as: UTF16.self)
+            // Fix dangling buffer pointer warning
+            return buffer.withUnsafeBufferPointer { bufferPointer in
+                let truncated = bufferPointer.prefix(Int(result))
+                return String(decoding: truncated, as: UTF16.self)
+            }
         } else {
             return "Unknown error: \(error)"
         }
@@ -309,7 +312,7 @@ internal struct WindowsCompat {
                 
                 // Get interface index and status
                 let interfaceIndex = Int(currentAdapter.pointee.IfIndex)
-                let isUp = currentAdapter.pointee.OperStatus == IfOperStatusUp
+                let isUp = DWORD(currentAdapter.pointee.OperStatus.rawValue) == IfOperStatusUp
                 
                 let networkInterface = NetworkInterface(
                     name: friendlyName.isEmpty ? name : friendlyName,

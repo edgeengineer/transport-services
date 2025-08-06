@@ -15,7 +15,7 @@ public final actor WindowsListener: Listener {
     public nonisolated let eventHandler: @Sendable (TransportServicesEvent) -> Void
     
     private var listenSocket: SOCKET = INVALID_SOCKET
-    public private(set) var state: ListenerState = .setup
+    public internal(set) var state: ListenerState = .setup
     public private(set) var group: ConnectionGroup?
     private var connectionLimit: UInt?
     private var acceptedCount: UInt = 0
@@ -229,11 +229,13 @@ public final actor WindowsListener: Listener {
         let newPreconnection = createAcceptedPreconnection(remoteEndpoint: remoteEndpoint)
         
         // Create WindowsConnection for the accepted socket
-        let connection = WindowsAcceptedConnection(
-            socket: clientSocket,
+        let connection = WindowsConnection(
             preconnection: newPreconnection,
             eventHandler: eventHandler
         )
+        
+        // Set the socket directly on the connection
+        await connection.setAcceptedSocket(clientSocket)
         
         // Add to connection group if configured
         if let group = self.group {
@@ -241,8 +243,8 @@ public final actor WindowsListener: Listener {
             await connection.setGroup(group)
         }
         
-        // Initialize the connection
-        await connection.markReady()
+        // Mark as established and notify
+        await connection.markEstablished()
         
         // Increment accepted count
         acceptedCount += 1
@@ -271,12 +273,13 @@ public final actor WindowsListener: Listener {
             let remoteEndpoint = createRemoteEndpoint(from: mutableAddr)
             let newPreconnection = createAcceptedPreconnection(remoteEndpoint: remoteEndpoint)
             
-            let connection = WindowsUDPConnection(
-                listenSocket: listenSocket,
-                remoteAddr: mutableAddr,
+            let connection = WindowsConnection(
                 preconnection: newPreconnection,
                 eventHandler: eventHandler
             )
+            
+            // Configure for UDP with shared socket
+            await connection.setUDPSocket(listenSocket, remoteAddr: mutableAddr)
             
             // Add to connection group if configured
             if let group = self.group {
@@ -284,11 +287,12 @@ public final actor WindowsListener: Listener {
                 await connection.setGroup(group)
             }
             
-            await connection.markReady()
+            // Mark as established
+            await connection.markEstablished()
             
-            // Store the initial data
+            // Store initial data for the first receive
             let data = Data(bytes: buffer, count: Int(bytesReceived))
-            await connection.storeInitialData(data)
+            await connection.setInitialData(data)
             
             acceptedCount += 1
             
@@ -329,90 +333,12 @@ public final actor WindowsListener: Listener {
     }
 }
 
-/// Special connection class for accepted TCP connections
-private actor WindowsAcceptedConnection: WindowsConnection {
-    private let acceptedSocket: SOCKET
-    
-    init(socket: SOCKET, preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
-        self.acceptedSocket = socket
-        super.init(preconnection: preconnection, eventHandler: eventHandler)
-    }
-    
-    func markReady() {
-        self.socket = acceptedSocket
-        self.state = .established
-        
-        // Associate with IOCP
-        _ = EventLoop.associateSocket(socket, handler: { _ in
-            // UDP socket handler - no specific action needed here
-        })
-        
-        // Notify ready
-        eventHandler(.ready(self))
-    }
-}
-
-/// Special connection class for UDP virtual connections
-private actor WindowsUDPConnection: WindowsConnection {
-    private let sharedSocket: SOCKET
-    private let remoteAddress: sockaddr_in
-    private var initialData: Data?
-    
-    init(listenSocket: SOCKET, remoteAddr: sockaddr_in, preconnection: Preconnection, 
-         eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
-        self.sharedSocket = listenSocket
-        self.remoteAddress = remoteAddr
-        super.init(preconnection: preconnection, eventHandler: eventHandler)
-    }
-    
-    func markReady() {
-        self.socket = sharedSocket
-        self.state = .established
-        eventHandler(.ready(self))
-    }
-    
-    func storeInitialData(_ data: Data) {
-        self.initialData = data
-    }
-    
-    override public func send(data: Data, context: MessageContext, endOfMessage: Bool) async throws {
-        guard state == .established else {
-            throw TransportServicesError.connectionClosed
-        }
-        
-        var addr = remoteAddress
-        let result = data.withUnsafeBytes { buffer in
-            withUnsafePointer(to: &addr) { addrPtr in
-                addrPtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                    sendto(sharedSocket, buffer.bindMemory(to: CChar.self).baseAddress,
-                          Int32(buffer.count), 0, sockaddrPtr, Int32(MemoryLayout<sockaddr_in>.size))
-                }
-            }
-        }
-        
-        if result == SOCKET_ERROR {
-            throw WindowsTransportError.sendFailed(WindowsCompat.getLastSocketError())
-        }
-        
-        eventHandler(.sent(self, context))
-    }
-    
-    override public func receive(minIncompleteLength: Int?, maxLength: Int?) async throws -> (Data, MessageContext) {
-        // If we have initial data, return it first
-        if let data = initialData {
-            initialData = nil
-            let context = MessageContext()
-            eventHandler(.received(self, data, context))
-            return (data, context)
-        }
-        
-        // Otherwise, receive from socket filtering by remote address
-        return try await super.receive(minIncompleteLength: minIncompleteLength, maxLength: maxLength)
-    }
-}
+// Removed WindowsAcceptedConnection and WindowsUDPConnection classes
+// as actors cannot be inherited in Swift. Instead, we add methods 
+// to WindowsConnection to handle accepted sockets and UDP sockets.
 
 /// Listener state enumeration (Windows-specific)
-internal enum ListenerState: Sendable {
+public enum ListenerState: Sendable {
     case setup
     case ready
     case failed
@@ -422,6 +348,6 @@ internal enum ListenerState: Sendable {
 // Windows-specific constants
 private let WSAEWOULDBLOCK = Int32(10035)
 private let SO_EXCLUSIVEADDRUSE = Int32(0xfffffffb)
-private let TRUE = BOOL(1)
+private let TRUE = WinSDK.BOOL(1)
 
 #endif

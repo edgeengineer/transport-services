@@ -71,7 +71,7 @@ internal final class WindowsEventLoop: @unchecked Sendable {
                 INFINITE
             )
             
-            if result == FALSE {
+            if result == WinSDK.FALSE {
                 let error = GetLastError()
                 if error == ERROR_ABANDONED_WAIT_0 {
                     // IOCP handle was closed
@@ -152,8 +152,11 @@ internal final class WindowsEventLoop: @unchecked Sendable {
     func associateSocket(_ socket: SOCKET, handler: @escaping (DWORD) -> Void) -> Bool {
         let completionKey = CompletionKey.socketBase + ULONG_PTR(socket)
         
+        // Convert socket to HANDLE using bitPattern
+        let socketHandle = HANDLE(bitPattern: Int(socket))
+        
         let result = CreateIoCompletionPort(
-            HANDLE(socket),
+            socketHandle,
             iocpHandle,
             completionKey,
             0
