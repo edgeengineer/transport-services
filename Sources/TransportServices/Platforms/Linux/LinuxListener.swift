@@ -208,8 +208,9 @@ public final class LinuxListener: Listener, @unchecked Sendable {
         
         let events = UInt32(LinuxCompat.EPOLLIN | LinuxCompat.EPOLLET)
         _ = EventLoop.registerSocket(listenSocketFd, events: events) { [weak self] in
-            Task {
-                await self?.handleAcceptEvent()
+            guard let strongSelf = self else { return }
+            Task { @Sendable in
+                await strongSelf.handleAcceptEvent()
             }
         }
     }
@@ -341,7 +342,10 @@ public final class LinuxListener: Listener, @unchecked Sendable {
         var ipBuffer = Array<CChar>(repeating: 0, count: Int(INET_ADDRSTRLEN))
         var mutableAddr = addr
         inet_ntop(AF_INET, &mutableAddr.sin_addr, &ipBuffer, socklen_t(INET_ADDRSTRLEN))
-        endpoint.ipAddress = String(cString: ipBuffer)
+        // Convert CChar array to UInt8 array for UTF8 decoding
+        let validLength = ipBuffer.firstIndex(of: 0) ?? ipBuffer.count
+        let uint8Buffer = ipBuffer[..<validLength].map { UInt8(bitPattern: $0) }
+        endpoint.ipAddress = String(decoding: uint8Buffer, as: UTF8.self)
         
         // Convert port
         endpoint.port = ntohs(addr.sin_port)
@@ -399,9 +403,10 @@ private final class LinuxAcceptedConnection: LinuxConnection, @unchecked Sendabl
         
         let events = UInt32(LinuxCompat.EPOLLIN | LinuxCompat.EPOLLOUT | LinuxCompat.EPOLLET)
         _ = EventLoop.registerSocket(socketFd, events: events) { [weak self] in
-            Task {
+            guard let strongSelf = self else { return }
+            Task { @Sendable in
                 // Handle socket events
-                _ = self
+                _ = strongSelf
             }
         }
     }

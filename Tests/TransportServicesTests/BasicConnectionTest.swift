@@ -34,8 +34,9 @@ struct BasicConnectionTest {
         
         // Try to establish connection with event tracking
         do {
-            let connection = try await withTimeout(.seconds(10), operation: "basic connection") { [preconnection] in
-                try await preconnection.initiate { event in
+            let pc = preconnection
+            let connection = try await withTimeout(.seconds(10), operation: "basic connection") {
+                try await pc.initiate { event in
                     Task {
                         await eventCollector.add(event)
                         switch event {
@@ -93,8 +94,9 @@ struct BasicConnectionTest {
         
         // Should work without event handler
         do {
-            let connection = try await withTimeout(.seconds(10), operation: "connection without handler") { [preconnection] in
-                try await preconnection.initiate()
+            let pc = preconnection
+            let connection = try await withTimeout(.seconds(10), operation: "connection without handler") {
+                try await pc.initiate()
             }
             // Wait for connection to fail
             try await connection.waitForState(.closed)

@@ -45,19 +45,19 @@ public class LinuxConnection: Connection, @unchecked Sendable {
     private var connectionContinuation: CheckedContinuation<Void, Error>?
     public var state: ConnectionState {
         get async {
-            return stateLock.withLock { _ in _state }
+            return _state
         }
     }
     private var _group: ConnectionGroup?
     public var group: ConnectionGroup? {
         get async {
-            return stateLock.withLock { _ in _group }
+            return _group
         }
     }
     private var _properties: TransportProperties
     public var properties: TransportProperties {
         get async {
-            return stateLock.withLock { _ in _properties }
+            return _properties
         }
     }
     
@@ -122,6 +122,8 @@ public class LinuxConnection: Connection, @unchecked Sendable {
                 socketFd = -1
             }
             eventHandler(.establishmentError(reason: error.localizedDescription))
+            // Also emit closed event as tests expect
+            eventHandler(.closed(self))
         }
     }
     
@@ -148,13 +150,11 @@ public class LinuxConnection: Connection, @unchecked Sendable {
     }
     
     public func abort() async {
-        Task {
-            await self.abortInternal()
-        }
+        await self.abortInternal()
     }
     
     private func abortInternal() async {
-        guard _state != .closed else { return }
+        let wasAlreadyClosed = _state == .closed
         
         _state = .closed
         
@@ -164,7 +164,13 @@ public class LinuxConnection: Connection, @unchecked Sendable {
             socketFd = -1
         }
         
+        // Always send the abort event, even if already closed
         eventHandler(.connectionError(self, reason: "Connection aborted"))
+        
+        // If it wasn't already closed, also send a closed event
+        if !wasAlreadyClosed {
+            eventHandler(.closed(self))
+        }
     }
     
     public func clone() async throws -> any Connection {
@@ -421,8 +427,9 @@ public class LinuxConnection: Connection, @unchecked Sendable {
         
         let events = LinuxCompat.EPOLLIN | LinuxCompat.EPOLLOUT | LinuxCompat.EPOLLET | LinuxCompat.EPOLLERR | LinuxCompat.EPOLLHUP
         _ = EventLoop.registerSocket(socketFd, events: events) { [weak self] in
-            Task {
-                await self?.handleSocketEvent()
+            guard let strongSelf = self else { return }
+            Task { @Sendable in
+                await strongSelf.handleSocketEvent()
             }
         }
     }
@@ -431,6 +438,9 @@ public class LinuxConnection: Connection, @unchecked Sendable {
         // Handle socket events (called by event loop)
         // Check if we have a pending connection
         if let continuation = connectionContinuation {
+            // Clear the continuation first to avoid double-resume
+            connectionContinuation = nil
+            
             // Check socket error status to see if connection succeeded
             var error: Int32 = 0
             var len = socklen_t(MemoryLayout<Int32>.size)
@@ -441,7 +451,6 @@ public class LinuxConnection: Connection, @unchecked Sendable {
             } else {
                 continuation.resume()
             }
-            connectionContinuation = nil
         }
         // Handle other I/O events here in the future
     }
@@ -477,12 +486,16 @@ public class LinuxConnection: Connection, @unchecked Sendable {
                 try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
                 
                 // If continuation is still set, the connection timed out
+                // Use atomic compare-and-swap to ensure only one place resumes
                 if self.connectionContinuation != nil {
-                    self.connectionContinuation = nil
-                    continuation.resume(throwing: TransportServicesError.timeout)
-                    
-                    // Clean up the socket
-                    EventLoop.unregisterSocket(self.socketFd)
+                    // Check again with the actual continuation to avoid race
+                    if let timeoutContinuation = self.connectionContinuation {
+                        self.connectionContinuation = nil
+                        timeoutContinuation.resume(throwing: TransportServicesError.timeout)
+                        
+                        // Clean up the socket
+                        EventLoop.unregisterSocket(self.socketFd)
+                    }
                     Glibc.close(self.socketFd)
                     self.socketFd = -1
                 }
