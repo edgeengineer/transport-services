@@ -10,7 +10,9 @@ import Testing
 import Foundation
 #endif
 @testable import TransportServices
+#if canImport(Network)
 import Network
+#endif
 
 @Suite("Basic Connection Test")
 struct BasicConnectionTest {

@@ -28,8 +28,12 @@ public func NewPreconnection(localEndpoints: [LocalEndpoint] = [],
         securityParameters: securityParameters
     )
     #elseif os(Linux)
-    // TODO: Return LinuxPreconnection when implemented
-    fatalError("Linux platform not yet implemented")
+    return LinuxPreconnection(
+        localEndpoints: localEndpoints,
+        remoteEndpoints: remoteEndpoints,
+        transportProperties: transportProperties,
+        securityParameters: securityParameters
+    )
     #elseif os(Windows)
     // TODO: Return WindowsPreconnection when implemented
     fatalError("Windows platform not yet implemented")

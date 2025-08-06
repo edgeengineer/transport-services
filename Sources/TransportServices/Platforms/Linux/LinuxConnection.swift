@@ -22,9 +22,7 @@ import Foundation
 #endif
 #endif
 
-#if canImport(Synchronization)
 import Synchronization
-#endif
 
 // Use constants from LinuxConstants
 
@@ -33,66 +31,33 @@ public class LinuxConnection: Connection, @unchecked Sendable {
     public let preconnection: Preconnection
     public let eventHandler: @Sendable (TransportServicesEvent) -> Void
     
-    #if canImport(Synchronization)
     private let stateLock = Mutex<Void>(())
-    #else
-    private let stateLock = NSLock()
-    #endif
     private var _socketFd: Int32 = -1
     internal var socketFd: Int32 {
         get {
-            #if canImport(Synchronization)
             return stateLock.withLock { _ in _socketFd }
-            #else
-            stateLock.lock()
-            defer { stateLock.unlock() }
-            return _socketFd
-            #endif
         }
         set {
-            #if canImport(Synchronization)
             stateLock.withLock { _ in _socketFd = newValue }
-            #else
-            stateLock.lock()
-            defer { stateLock.unlock() }
-            _socketFd = newValue
-            #endif
         }
     }
     internal var _state: ConnectionState = .establishing
+    private var connectionContinuation: CheckedContinuation<Void, Error>?
     public var state: ConnectionState {
         get async {
-            #if canImport(Synchronization)
             return stateLock.withLock { _ in _state }
-            #else
-            stateLock.lock()
-            defer { stateLock.unlock() }
-            return _state
-            #endif
         }
     }
     private var _group: ConnectionGroup?
     public var group: ConnectionGroup? {
         get async {
-            #if canImport(Synchronization)
             return stateLock.withLock { _ in _group }
-            #else
-            stateLock.lock()
-            defer { stateLock.unlock() }
-            return _group
-            #endif
         }
     }
     private var _properties: TransportProperties
     public var properties: TransportProperties {
         get async {
-            #if canImport(Synchronization)
             return stateLock.withLock { _ in _properties }
-            #else
-            stateLock.lock()
-            defer { stateLock.unlock() }
-            return _properties
-            #endif
         }
     }
     
@@ -109,15 +74,9 @@ public class LinuxConnection: Connection, @unchecked Sendable {
     // MARK: - Connection Protocol Implementation
     
     public func setGroup(_ group: ConnectionGroup?) async {
-        #if canImport(Synchronization)
         stateLock.withLock { _ in
             self._group = group
         }
-        #else
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        self._group = group
-        #endif
     }
     
     // MARK: - Connection Lifecycle
@@ -153,14 +112,11 @@ public class LinuxConnection: Connection, @unchecked Sendable {
             // Connect to remote endpoint
             try await connectToRemoteEndpoint(remoteEndpoint)
             
-            // Register with event loop for I/O events
-            registerWithEventLoop()
-            
-            _state = .established
+            stateLock.withLock { _ in _state = .established }
             eventHandler(.ready(self))
             
         } catch {
-            _state = .closed
+            stateLock.withLock { _ in _state = .closed }
             if socketFd >= 0 {
                 Glibc.close(socketFd)
                 socketFd = -1
@@ -463,7 +419,7 @@ public class LinuxConnection: Connection, @unchecked Sendable {
     private func registerWithEventLoop() {
         guard socketFd >= 0 else { return }
         
-        let events = LinuxCompat.EPOLLIN | LinuxCompat.EPOLLOUT | LinuxCompat.EPOLLET
+        let events = LinuxCompat.EPOLLIN | LinuxCompat.EPOLLOUT | LinuxCompat.EPOLLET | LinuxCompat.EPOLLERR | LinuxCompat.EPOLLHUP
         _ = EventLoop.registerSocket(socketFd, events: events) { [weak self] in
             Task {
                 await self?.handleSocketEvent()
@@ -473,7 +429,21 @@ public class LinuxConnection: Connection, @unchecked Sendable {
     
     private func handleSocketEvent() async {
         // Handle socket events (called by event loop)
-        // This would process any pending I/O operations
+        // Check if we have a pending connection
+        if let continuation = connectionContinuation {
+            // Check socket error status to see if connection succeeded
+            var error: Int32 = 0
+            var len = socklen_t(MemoryLayout<Int32>.size)
+            let result = getsockopt(socketFd, SOL_SOCKET, SO_ERROR, &error, &len)
+            
+            if result < 0 || error != 0 {
+                continuation.resume(throwing: LinuxTransportError.connectFailed(errno: error))
+            } else {
+                continuation.resume()
+            }
+            connectionContinuation = nil
+        }
+        // Handle other I/O events here in the future
     }
     
     private func waitForWritable() async throws {
@@ -493,18 +463,28 @@ public class LinuxConnection: Connection, @unchecked Sendable {
     }
     
     private func waitForConnection() async throws {
+        // Register with event loop first to catch connection events
+        registerWithEventLoop()
+        
         // Wait for connection to complete (for non-blocking connect)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            // Store the continuation to be called when the socket becomes writable
+            self.connectionContinuation = continuation
+            
+            // Set up a timeout
+            let timeoutSeconds = self._properties.connTimeout ?? 30.0
             Task {
-                // Check socket error status
-                var error: Int32 = 0
-                var len = socklen_t(MemoryLayout<Int32>.size)
-                let result = getsockopt(socketFd, SOL_SOCKET, SO_ERROR, &error, &len)
+                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
                 
-                if result < 0 || error != 0 {
-                    continuation.resume(throwing: LinuxTransportError.connectFailed(errno: error))
-                } else {
-                    continuation.resume()
+                // If continuation is still set, the connection timed out
+                if self.connectionContinuation != nil {
+                    self.connectionContinuation = nil
+                    continuation.resume(throwing: TransportServicesError.timeout)
+                    
+                    // Clean up the socket
+                    EventLoop.unregisterSocket(self.socketFd)
+                    Glibc.close(self.socketFd)
+                    self.socketFd = -1
                 }
             }
         }

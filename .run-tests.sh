@@ -11,7 +11,7 @@ else
 fi
 
 # Run tests with timeout
-gtimeout 15s $CMD
+timeout 15s $CMD
 EXIT_CODE=$?
 
 # Handle timeout

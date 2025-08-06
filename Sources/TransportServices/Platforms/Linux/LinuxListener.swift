@@ -22,61 +22,31 @@ import Foundation
 #endif
 #endif
 
-#if canImport(Synchronization)
 import Synchronization
-#endif
 
 /// Linux platform-specific listener implementation using BSD sockets
 public final class LinuxListener: Listener, @unchecked Sendable {
     public let preconnection: Preconnection
     public let eventHandler: @Sendable (TransportServicesEvent) -> Void
     
-    #if canImport(Synchronization)
     private let stateLock = Mutex<Void>(())
-    #else
-    private let stateLock = NSLock()
-    #endif
     private var listenSocketFd: Int32 = -1
     private var _state: ListenerState = .setup
     public private(set) var state: ListenerState {
         get {
-            #if canImport(Synchronization)
             return stateLock.withLock { _ in _state }
-            #else
-            stateLock.lock()
-            defer { stateLock.unlock() }
-            return _state
-            #endif
         }
         set {
-            #if canImport(Synchronization)
             stateLock.withLock { _ in _state = newValue }
-            #else
-            stateLock.lock()
-            defer { stateLock.unlock() }
-            _state = newValue
-            #endif
         }
     }
     private var _group: ConnectionGroup?
     public private(set) var group: ConnectionGroup? {
         get {
-            #if canImport(Synchronization)
             return stateLock.withLock { _ in _group }
-            #else
-            stateLock.lock()
-            defer { stateLock.unlock() }
-            return _group
-            #endif
         }
         set {
-            #if canImport(Synchronization)
             stateLock.withLock { _ in _group = newValue }
-            #else
-            stateLock.lock()
-            defer { stateLock.unlock() }
-            _group = newValue
-            #endif
         }
     }
     
