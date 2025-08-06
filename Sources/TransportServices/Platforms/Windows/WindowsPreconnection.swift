@@ -101,23 +101,23 @@ public final class WindowsPreconnection: Preconnection, @unchecked Sendable {
         // This would be extended to support more properties
         switch property {
         case "reliability":
-            if let reliability = value as? TransportProperties.Reliability {
+            if let reliability = value as? Preference {
                 transportProperties.reliability = reliability
             }
         case "ordering":
-            if let ordering = value as? TransportProperties.Ordering {
+            if let ordering = value as? Preference {
                 transportProperties.ordering = ordering
             }
         case "congestionControl":
-            if let congestionControl = value as? TransportProperties.CongestionControl {
+            if let congestionControl = value as? Preference {
                 transportProperties.congestionControl = congestionControl
             }
         case "keepAlive":
-            if let keepAlive = value as? TransportProperties.KeepAlive {
+            if let keepAlive = value as? Preference {
                 transportProperties.keepAlive = keepAlive
             }
         case "multipath":
-            if let multipath = value as? TransportProperties.Multipath {
+            if let multipath = value as? Multipath {
                 transportProperties.multipath = multipath
             }
         default:
