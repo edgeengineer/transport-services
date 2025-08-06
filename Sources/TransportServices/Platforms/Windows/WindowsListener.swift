@@ -210,8 +210,7 @@ public final actor WindowsListener: Listener {
                 // No pending connections
                 return
             }
-            // Log error but continue accepting
-            print("Accept error: \(WindowsCompat.errorString(error))")
+            // Accept error - continue accepting connections
             return
         }
         

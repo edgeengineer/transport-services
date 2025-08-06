@@ -200,8 +200,7 @@ public final class AppleListener: Listener, @unchecked Sendable {
                 // If we get an error, it might mean the listener was stopped
                 // or there was a network error
                 if isListening {
-                    // Log error but continue listening
-                    print("Error accepting connection: \(error)")
+                    // Error accepting connection - continue listening
                 }
             }
         }
@@ -209,7 +208,7 @@ public final class AppleListener: Listener, @unchecked Sendable {
         // If we exited the loop due to connection limit, keep the listener active
         // but stop accepting new connections
         if let limit = newConnectionLimit, acceptedConnections >= limit {
-            print("Connection limit reached: \(limit)")
+            // Connection limit reached
         }
     }
     

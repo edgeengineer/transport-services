@@ -105,7 +105,7 @@ internal final class LinuxEventLoop: @unchecked Sendable {
                 if errno == EINTR {
                     continue
                 }
-                print("epoll_wait error: \(String(cString: strerror(errno)))")
+                // epoll_wait error - errno contains the error code
                 break
             }
             

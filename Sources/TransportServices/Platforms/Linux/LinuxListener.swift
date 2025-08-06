@@ -254,8 +254,8 @@ public final class LinuxListener: Listener, @unchecked Sendable {
                 // No pending connections
                 return
             }
-            // Log error but continue accepting
-            print("Accept error: \(String(cString: strerror(errno)))")
+            // Accept error - errno contains the error code
+            // Continue accepting connections
             return
         }
         

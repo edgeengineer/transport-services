@@ -83,7 +83,7 @@ internal final class WindowsEventLoop: @unchecked Sendable {
                     continue
                 }
                 
-                print("GetQueuedCompletionStatus error: \(error)")
+                // GetQueuedCompletionStatus error
                 
                 // Handle I/O errors for specific sockets
                 if completionKey >= CompletionKey.socketBase {
