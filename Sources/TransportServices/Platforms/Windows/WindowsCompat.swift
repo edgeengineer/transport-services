@@ -31,7 +31,7 @@ internal struct WindowsCompat {
         guard !wsaInitialized else { return }
         
         var wsaData = WSADATA()
-        let version = WinSDK.MAKEWORD(2, 2) // Request Winsock 2.2
+        let version = WORD(2) | (WORD(2) << 8) // MAKEWORD(2, 2) - Request Winsock 2.2
         let result = WSAStartup(version, &wsaData)
         
         if result != 0 {
@@ -94,7 +94,9 @@ internal struct WindowsCompat {
         )
         
         if result > 0 {
-            return String(decodingCString: buffer, as: UTF16.self)
+            // Convert WCHAR buffer to String
+            let bufferPointer = UnsafeBufferPointer(start: buffer, count: Int(result))
+            return String(decoding: bufferPointer, as: UTF16.self)
         } else {
             return "Unknown error: \(error)"
         }
@@ -158,7 +160,7 @@ internal struct WindowsCompat {
         var buffer = [CChar](repeating: 0, count: bufferSize)
         
         if inet_ntop(family, addr, &buffer, Int(bufferSize)) != nil {
-            return String(cString: buffer)
+            return String(decoding: buffer, as: UTF8.self)
         }
         return nil
     }
@@ -190,22 +192,22 @@ internal struct WindowsCompat {
                 
                 while let addr = current {
                     if addr.pointee.ai_family == AF_INET {
-                        let sockaddrIn = addr.pointee.ai_addr!.withMemoryRebound(
+                        addr.pointee.ai_addr!.withMemoryRebound(
                             to: sockaddr_in.self,
                             capacity: 1
-                        ) { $0.pointee }
-                        
-                        if let ip = ipToString(family: AF_INET, addr: &sockaddrIn.sin_addr) {
-                            addresses.append(ip)
+                        ) { ptr in
+                            if let ip = ipToString(family: AF_INET, addr: &ptr.pointee.sin_addr) {
+                                addresses.append(ip)
+                            }
                         }
                     } else if addr.pointee.ai_family == AF_INET6 {
-                        let sockaddrIn6 = addr.pointee.ai_addr!.withMemoryRebound(
+                        addr.pointee.ai_addr!.withMemoryRebound(
                             to: sockaddr_in6.self,
                             capacity: 1
-                        ) { $0.pointee }
-                        
-                        if let ip = ipToString(family: AF_INET6, addr: &sockaddrIn6.sin6_addr) {
-                            addresses.append(ip)
+                        ) { ptr in
+                            if let ip = ipToString(family: AF_INET6, addr: &ptr.pointee.sin6_addr) {
+                                addresses.append(ip)
+                            }
                         }
                     }
                     
@@ -251,7 +253,14 @@ internal struct WindowsCompat {
             
             while let currentAdapter = adapter {
                 let name = String(cString: currentAdapter.pointee.AdapterName)
-                let friendlyName = String(decodingCString: currentAdapter.pointee.FriendlyName, as: UTF16.self)
+                // Convert Windows WCHAR string to Swift String
+                var friendlyNameBuffer: [UInt16] = []
+                var ptr = currentAdapter.pointee.FriendlyName
+                while ptr.pointee != 0 {
+                    friendlyNameBuffer.append(ptr.pointee)
+                    ptr = ptr.advanced(by: 1)
+                }
+                let friendlyName = String(decoding: friendlyNameBuffer, as: UTF16.self)
                 
                 // Determine interface type
                 let type: NetworkInterface.InterfaceType
@@ -274,16 +283,18 @@ internal struct WindowsCompat {
                     let sockaddr = addr.pointee.Address.lpSockaddr
                     
                     if sockaddr?.pointee.sa_family == ADDRESS_FAMILY(AF_INET) {
-                        let sin = sockaddr!.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
-                        if let ip = ipToString(family: AF_INET, addr: &sin.sin_addr) {
-                            let port = ntohs(sin.sin_port)
-                            addresses.append(.ipv4(address: ip, port: port))
+                        sockaddr!.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { ptr in
+                            if let ip = ipToString(family: AF_INET, addr: &ptr.pointee.sin_addr) {
+                                let port = ntohs(ptr.pointee.sin_port)
+                                addresses.append(.ipv4(address: ip, port: port))
+                            }
                         }
                     } else if sockaddr?.pointee.sa_family == ADDRESS_FAMILY(AF_INET6) {
-                        let sin6 = sockaddr!.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { $0.pointee }
-                        if let ip = ipToString(family: AF_INET6, addr: &sin6.sin6_addr) {
-                            let port = ntohs(sin6.sin6_port)
-                            addresses.append(.ipv6(address: ip, port: port, scopeId: sin6.sin6_scope_id))
+                        sockaddr!.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { ptr in
+                            if let ip = ipToString(family: AF_INET6, addr: &ptr.pointee.sin6_addr) {
+                                let port = ntohs(ptr.pointee.sin6_port)
+                                addresses.append(.ipv6(address: ip, port: port, scopeId: ptr.pointee.sin6_scope_id))
+                            }
                         }
                     }
                     
