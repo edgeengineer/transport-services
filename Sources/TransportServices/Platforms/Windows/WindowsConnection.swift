@@ -20,8 +20,8 @@ public final actor WindowsConnection: Connection {
     public private(set) var properties: TransportProperties
     
     // IOCP-specific data
-    private var sendOverlapped: WSAOVERLAPPED?
-    private var recvOverlapped: WSAOVERLAPPED?
+    private var sendOverlapped: OVERLAPPED?
+    private var recvOverlapped: OVERLAPPED?
     private var receiveBuffer = Data()
     private let maxBufferSize = 65536
     
@@ -371,7 +371,7 @@ public final actor WindowsConnection: Connection {
                 wsaBuf.buf = UnsafeMutablePointer(mutating: buffer.bindMemory(to: CChar.self).baseAddress)
                 
                 // Create overlapped structure
-                var overlapped = WSAOVERLAPPED()
+                var overlapped = OVERLAPPED()
                 var bytesSent: DWORD = 0
                 
                 let result = WSASend(
@@ -406,7 +406,7 @@ public final actor WindowsConnection: Connection {
             wsaBuf.len = ULONG(bufferSize)
             wsaBuf.buf = &buffer
             
-            var overlapped = WSAOVERLAPPED()
+            var overlapped = OVERLAPPED()
             var bytesReceived: DWORD = 0
             var flags: DWORD = 0
             

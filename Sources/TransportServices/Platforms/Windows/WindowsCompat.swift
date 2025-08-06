@@ -160,7 +160,10 @@ internal struct WindowsCompat {
         var buffer = [CChar](repeating: 0, count: bufferSize)
         
         if inet_ntop(family, addr, &buffer, Int(bufferSize)) != nil {
-            return String(decoding: buffer, as: UTF8.self)
+            // Find null terminator
+            let validLength = buffer.firstIndex(of: 0) ?? buffer.count
+            let uint8Buffer = buffer[..<validLength].map { UInt8(bitPattern: $0) }
+            return String(decoding: uint8Buffer, as: UTF8.self)
         }
         return nil
     }
@@ -235,7 +238,7 @@ internal struct WindowsCompat {
         
         let result = buffer.withUnsafeMutableBytes { ptr in
             GetAdaptersAddresses(
-                AF_UNSPEC,
+                ULONG(AF_UNSPEC),
                 flags,
                 nil,
                 ptr.bindMemory(to: IP_ADAPTER_ADDRESSES.self).baseAddress,
@@ -254,13 +257,16 @@ internal struct WindowsCompat {
             while let currentAdapter = adapter {
                 let name = String(cString: currentAdapter.pointee.AdapterName)
                 // Convert Windows WCHAR string to Swift String
-                var friendlyNameBuffer: [UInt16] = []
-                var ptr = currentAdapter.pointee.FriendlyName
-                while ptr.pointee != 0 {
-                    friendlyNameBuffer.append(ptr.pointee)
-                    ptr = ptr.advanced(by: 1)
+                var friendlyName = ""
+                if let ptr = currentAdapter.pointee.FriendlyName {
+                    var friendlyNameBuffer: [UInt16] = []
+                    var currentPtr = ptr
+                    while currentPtr.pointee != 0 {
+                        friendlyNameBuffer.append(currentPtr.pointee)
+                        currentPtr = currentPtr.advanced(by: 1)
+                    }
+                    friendlyName = String(decoding: friendlyNameBuffer, as: UTF16.self)
                 }
-                let friendlyName = String(decoding: friendlyNameBuffer, as: UTF16.self)
                 
                 // Determine interface type
                 let type: NetworkInterface.InterfaceType
