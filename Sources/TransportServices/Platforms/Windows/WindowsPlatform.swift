@@ -34,40 +34,54 @@ public final class WindowsPlatform: Platform {
     }
     
     public func gatherCandidates(preconnection: any Preconnection) async throws -> CandidateSet {
-        let candidateSet = CandidateSet()
+        var localCandidates: [LocalCandidate] = []
+        var remoteCandidates: [RemoteCandidate] = []
         
-        // Resolve remote endpoints
+        // Gather local candidates
+        for localEndpoint in preconnection.localEndpoints {
+            let addresses: [SocketAddress] = [] // TODO: Resolve local addresses
+            let candidate = LocalCandidate(
+                endpoint: localEndpoint,
+                addresses: addresses,
+                interface: nil
+            )
+            localCandidates.append(candidate)
+        }
+        
+        // Gather remote candidates
         for remoteEndpoint in preconnection.remoteEndpoints {
+            var addresses: [SocketAddress] = []
+            
             if let hostname = remoteEndpoint.hostName {
                 // Resolve hostname to IP addresses
                 let socketType = preconnection.transportProperties.reliability == .require
                     ? WindowsCompat.SOCK_STREAM
                     : WindowsCompat.SOCK_DGRAM
                 
-                let addresses = try await WindowsCompat.resolveHostname(hostname, type: socketType)
+                let resolvedAddresses = try await WindowsCompat.resolveHostname(hostname, type: socketType)
                 
-                for address in addresses {
-                    let candidate = PathCandidate(
-                        localEndpoint: preconnection.localEndpoints.first,
-                        remoteEndpoint: RemoteEndpoint(ipAddress: address, port: remoteEndpoint.port),
-                        protocolStack: createProtocolStack(for: preconnection.transportProperties),
-                        interfaceName: nil
-                    )
-                    candidateSet.addCandidate(candidate)
+                for address in resolvedAddresses {
+                    // Create SocketAddress from resolved IP
+                    // TODO: Detect IPv4 vs IPv6
+                    let socketAddr = SocketAddress.ipv4(address: address, port: remoteEndpoint.port ?? 0)
+                    addresses.append(socketAddr)
                 }
             } else if let ipAddress = remoteEndpoint.ipAddress {
                 // Direct IP address
-                let candidate = PathCandidate(
-                    localEndpoint: preconnection.localEndpoints.first,
-                    remoteEndpoint: remoteEndpoint,
-                    protocolStack: createProtocolStack(for: preconnection.transportProperties),
-                    interfaceName: nil
-                )
-                candidateSet.addCandidate(candidate)
+                // TODO: Detect IPv4 vs IPv6
+                let socketAddr = SocketAddress.ipv4(address: ipAddress, port: remoteEndpoint.port ?? 0)
+                addresses.append(socketAddr)
             }
+            
+            let candidate = RemoteCandidate(
+                endpoint: remoteEndpoint,
+                addresses: addresses,
+                priority: 0
+            )
+            remoteCandidates.append(candidate)
         }
         
-        return candidateSet
+        return CandidateSet(localCandidates: localCandidates, remoteCandidates: remoteCandidates)
     }
     
     public func isProtocolStackSupported(_ stack: ProtocolStack) -> Bool {
@@ -111,40 +125,5 @@ public final class WindowsPlatform: Platform {
     }
 }
 
-// MARK: - Path Candidate
-
-/// Represents a candidate path for connection establishment
-private class PathCandidate {
-    let localEndpoint: LocalEndpoint?
-    let remoteEndpoint: RemoteEndpoint
-    let protocolStack: ProtocolStack
-    let interfaceName: String?
-    
-    init(localEndpoint: LocalEndpoint?, remoteEndpoint: RemoteEndpoint, protocolStack: ProtocolStack, interfaceName: String?) {
-        self.localEndpoint = localEndpoint
-        self.remoteEndpoint = remoteEndpoint
-        self.protocolStack = protocolStack
-        self.interfaceName = interfaceName
-    }
-}
-
-// MARK: - Candidate Set
-
-/// Collection of path candidates for connection establishment
-private class CandidateSet {
-    private var candidates: [PathCandidate] = []
-    
-    func addCandidate(_ candidate: PathCandidate) {
-        candidates.append(candidate)
-    }
-    
-    func getCandidates() -> [PathCandidate] {
-        return candidates
-    }
-    
-    func isEmpty() -> Bool {
-        return candidates.isEmpty
-    }
-}
 
 #endif

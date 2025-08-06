@@ -14,13 +14,13 @@ public final class WindowsPreconnection: Preconnection, @unchecked Sendable {
     public var localEndpoints: [LocalEndpoint]
     public var remoteEndpoints: [RemoteEndpoint]
     public var transportProperties: TransportProperties
-    public var securityParameters: SecurityParameters?
+    public var securityParameters: SecurityParameters
     
     public init(
         localEndpoints: [LocalEndpoint] = [],
         remoteEndpoints: [RemoteEndpoint] = [],
         transportProperties: TransportProperties = TransportProperties(),
-        securityParameters: SecurityParameters? = nil
+        securityParameters: SecurityParameters = SecurityParameters()
     ) {
         self.localEndpoints = localEndpoints
         self.remoteEndpoints = remoteEndpoints
@@ -32,6 +32,76 @@ public final class WindowsPreconnection: Preconnection, @unchecked Sendable {
     }
     
     // MARK: - Preconnection Protocol Implementation
+    
+    public func resolve() async -> (local: [LocalEndpoint], remote: [RemoteEndpoint]) {
+        // For now, just return the endpoints as-is
+        // TODO: Implement proper endpoint resolution
+        return (localEndpoints, remoteEndpoints)
+    }
+    
+    public func initiate(timeout: TimeInterval? = nil, eventHandler: ((@Sendable (TransportServicesEvent) -> Void))? = nil) async throws -> any Connection {
+        let handler = eventHandler ?? { _ in }
+        let connection = WindowsConnection(
+            preconnection: self,
+            eventHandler: handler
+        )
+        
+        // Start connection establishment
+        await connection.initiate()
+        
+        // Wait for connection to be ready or fail
+        let startTime = Date()
+        let timeoutInterval = timeout ?? transportProperties.connTimeout ?? 30.0
+        
+        while await connection.state == .establishing {
+            if Date().timeIntervalSince(startTime) > timeoutInterval {
+                await connection.close()
+                throw TransportServicesError.timedOut
+            }
+            try await Task.sleep(nanoseconds: 10_000_000) // 10ms
+        }
+        
+        let finalState = await connection.state
+        if finalState != .established {
+            throw TransportServicesError.connectionFailed
+        }
+        
+        return connection
+    }
+    
+    public func initiateWithSend(messageData: Data, messageContext: MessageContext, timeout: TimeInterval? = nil, eventHandler: ((@Sendable (TransportServicesEvent) -> Void))? = nil) async throws -> any Connection {
+        // Initiate connection first
+        let connection = try await initiate(timeout: timeout, eventHandler: eventHandler)
+        
+        // Then send the initial data
+        try await connection.send(data: messageData, context: messageContext)
+        
+        return connection
+    }
+    
+    public func listen(eventHandler: ((@Sendable (TransportServicesEvent) -> Void))? = nil) async throws -> any Listener {
+        let handler = eventHandler ?? { _ in }
+        let listener = WindowsListener(
+            preconnection: self,
+            eventHandler: handler
+        )
+        
+        // Start listening
+        try await listener.listen()
+        
+        return listener
+    }
+    
+    public func rendezvous(eventHandler: ((@Sendable (TransportServicesEvent) -> Void))? = nil) async throws -> (any Connection, any Listener) {
+        // TODO: Implement rendezvous
+        throw TransportServicesError.notSupported(reason: "Rendezvous not implemented on Windows")
+    }
+    
+    public mutating func addRemote(_ remoteEndpoints: [RemoteEndpoint]) {
+        self.remoteEndpoints.append(contentsOf: remoteEndpoints)
+    }
+    
+    // MARK: - Legacy methods (for backward compatibility)
     
     public func establish(eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) -> any Connection {
         let connection = WindowsConnection(

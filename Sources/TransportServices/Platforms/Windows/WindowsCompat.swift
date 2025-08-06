@@ -257,7 +257,7 @@ internal struct WindowsCompat {
                 let type: NetworkInterface.InterfaceType
                 switch currentAdapter.pointee.IfType {
                 case IF_TYPE_ETHERNET_CSMACD:
-                    type = .wired
+                    type = .ethernet
                 case IF_TYPE_IEEE80211:
                     type = .wifi
                 case IF_TYPE_SOFTWARE_LOOPBACK:
@@ -267,7 +267,7 @@ internal struct WindowsCompat {
                 }
                 
                 // Get IP addresses
-                var addresses: [String] = []
+                var addresses: [SocketAddress] = []
                 var unicastAddr = currentAdapter.pointee.FirstUnicastAddress
                 
                 while let addr = unicastAddr {
@@ -276,22 +276,31 @@ internal struct WindowsCompat {
                     if sockaddr?.pointee.sa_family == ADDRESS_FAMILY(AF_INET) {
                         let sin = sockaddr!.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
                         if let ip = ipToString(family: AF_INET, addr: &sin.sin_addr) {
-                            addresses.append(ip)
+                            let port = ntohs(sin.sin_port)
+                            addresses.append(.ipv4(address: ip, port: port))
                         }
                     } else if sockaddr?.pointee.sa_family == ADDRESS_FAMILY(AF_INET6) {
                         let sin6 = sockaddr!.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { $0.pointee }
                         if let ip = ipToString(family: AF_INET6, addr: &sin6.sin6_addr) {
-                            addresses.append(ip)
+                            let port = ntohs(sin6.sin6_port)
+                            addresses.append(.ipv6(address: ip, port: port, scopeId: sin6.sin6_scope_id))
                         }
                     }
                     
                     unicastAddr = addr.pointee.Next
                 }
                 
+                // Get interface index and status
+                let interfaceIndex = Int(currentAdapter.pointee.IfIndex)
+                let isUp = currentAdapter.pointee.OperStatus == IfOperStatusUp
+                
                 let networkInterface = NetworkInterface(
                     name: friendlyName.isEmpty ? name : friendlyName,
+                    index: interfaceIndex,
                     type: type,
-                    addresses: addresses
+                    addresses: addresses,
+                    isUp: isUp,
+                    supportsMulticast: true  // TODO: Check actual multicast support
                 )
                 interfaces.append(networkInterface)
                 
@@ -363,5 +372,7 @@ private let GAA_FLAG_SKIP_MULTICAST = DWORD(0x0004)
 private let IF_TYPE_ETHERNET_CSMACD = DWORD(6)
 private let IF_TYPE_IEEE80211 = DWORD(71)
 private let IF_TYPE_SOFTWARE_LOOPBACK = DWORD(24)
+
+private let IfOperStatusUp = DWORD(1)
 
 #endif
