@@ -106,12 +106,8 @@ public actor ConnectionGroup {
     /// Remove a connection from the group
     func removeConnection(_ connection: any Connection) {
         connections.removeAll { existingConnection in
-            // Compare by identity if possible, otherwise by preconnection
-            if let c1 = existingConnection as? AnyObject,
-               let c2 = connection as? AnyObject {
-                return c1 === c2
-            }
-            return false
+            // Compare by identity since actors are reference types
+            return (existingConnection as AnyObject) === (connection as AnyObject)
         }
     }
     
@@ -122,14 +118,26 @@ public actor ConnectionGroup {
     
     /// Close all connections in the group
     public func closeGroup() async {
-        // Implementation would close all connections
+        await withTaskGroup(of: Void.self) { taskGroup in
+            for connection in connections {
+                taskGroup.addTask {
+                    await connection.close()
+                }
+            }
+        }
     }
     
     /// Abort all connections in the group
     public func abortGroup() {
-        // Implementation would abort all connections
+        // Create a task to abort all connections concurrently
         Task {
-            // Would iterate through connections and abort them
+            await withTaskGroup(of: Void.self) { taskGroup in
+                for connection in connections {
+                    taskGroup.addTask {
+                        await connection.abort()
+                    }
+                }
+            }
         }
     }
 }
