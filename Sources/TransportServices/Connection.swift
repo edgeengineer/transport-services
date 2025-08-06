@@ -35,10 +35,10 @@ public protocol Connection: Sendable {
     // MARK: - Connection Lifecycle
     
     /// Close the connection gracefully
-    func close() async
+    func close()
     
     /// Abort the connection immediately
-    func abort() async
+    func abort()
     
     /// Clone this connection to create a new connection with same properties
     func clone() async throws -> any Connection

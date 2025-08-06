@@ -57,7 +57,7 @@ struct SimpleServer {
             try await connection.send(data: Data(response.utf8))
             
             // Close connection
-            await connection.close()
+            connection.close()
         } catch {
             print("Error handling connection: \(error)")
         }

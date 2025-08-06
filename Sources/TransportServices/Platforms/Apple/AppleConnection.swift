@@ -82,7 +82,7 @@ public actor AppleConnection: Connection {
         nwConnection.start(queue: .global())
     }
     
-    public func close() async {
+    public func close() {
         guard _state != .closed else { return }
         
         _state = .closing
@@ -97,7 +97,7 @@ public actor AppleConnection: Connection {
         eventHandler(.closed(self))
     }
     
-    public func abort() async {
+    public func abort() {
         guard _state != .closed else { return }
         
         _state = .closed

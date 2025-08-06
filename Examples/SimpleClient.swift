@@ -51,7 +51,7 @@ struct SimpleClient {
         let (data, _) = try await connection.receive()
         print("Received: \(String(data: data, encoding: .utf8) ?? "invalid")")
         
-        // Close connection
-        await connection.close()
+// Close connection
+connection.close()
     }
 }

@@ -6,6 +6,7 @@ import FoundationEssentials
 import Foundation
 #endif
 #endif
+
 /// Represents a group of related connections
 public actor ConnectionGroup {
     private var connections: [any Connection] = []
@@ -38,7 +39,7 @@ public actor ConnectionGroup {
         await withTaskGroup(of: Void.self) { taskGroup in
             for connection in connections {
                 taskGroup.addTask {
-                    await connection.close()
+                    connection.close()
                 }
             }
         }
@@ -48,13 +49,13 @@ public actor ConnectionGroup {
     public func abortGroup() {
         // Create a task to abort all connections concurrently
         Task {
-            await withTaskGroup(of: Void.self) { taskGroup in
-                for connection in connections {
-                    taskGroup.addTask {
-                        await connection.abort()
-                    }
+        await withTaskGroup(of: Void.self) { taskGroup in
+            for connection in connections {
+                taskGroup.addTask {
+                    connection.abort()
                 }
             }
+        }
         }
     }
 }

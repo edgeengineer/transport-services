@@ -127,7 +127,7 @@ public class LinuxConnection: Connection, @unchecked Sendable {
         }
     }
     
-    public func close() async {
+    public func close() {
         guard _state != .closed else { return }
         
         _state = .closing
@@ -149,11 +149,11 @@ public class LinuxConnection: Connection, @unchecked Sendable {
         eventHandler(.closed(self))
     }
     
-    public func abort() async {
-        await self.abortInternal()
+    public func abort() {
+        self.abortInternal()
     }
     
-    private func abortInternal() async {
+    private func abortInternal() {
         let wasAlreadyClosed = _state == .closed
         
         _state = .closed

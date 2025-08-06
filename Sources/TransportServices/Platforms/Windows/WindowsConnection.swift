@@ -99,7 +99,13 @@ public final actor WindowsConnection: Connection {
         }
     }
     
-    public func close() async {
+    nonisolated public func close() {
+        Task {
+            await self.closeInternal()
+        }
+    }
+
+    private func closeInternal() {
         guard state != .closed else { return }
         
         state = .closing
@@ -119,7 +125,7 @@ public final actor WindowsConnection: Connection {
     }
     
     nonisolated public func abort() {
-        Task { @Sendable in
+        Task {
             await self.abortInternal()
         }
     }
@@ -239,7 +245,7 @@ public final actor WindowsConnection: Connection {
             }
         } else if result == 0 {
             // Connection closed by peer
-            await close()
+            close()
             throw TransportServicesError.connectionClosed
         }
         

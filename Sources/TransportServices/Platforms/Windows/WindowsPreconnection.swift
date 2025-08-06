@@ -55,7 +55,7 @@ public final class WindowsPreconnection: Preconnection, @unchecked Sendable {
         
         while await connection.state == .establishing {
             if Date().timeIntervalSince(startTime) > timeoutInterval {
-                await connection.close()
+                connection.close()
                 throw TransportServicesError.timedOut
             }
             try await Task.sleep(nanoseconds: 10_000_000) // 10ms
