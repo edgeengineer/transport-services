@@ -61,9 +61,9 @@ public final class WindowsPreconnection: Preconnection, @unchecked Sendable {
             try await Task.sleep(nanoseconds: 10_000_000) // 10ms
         }
         
-        let finalState = await connection.state
         // Return the connection even if it's closed - tests may want to inspect it
         // Only throw if we're still establishing after timeout (which shouldn't happen due to loop above)
+        _ = await connection.state
         
         return connection
     }

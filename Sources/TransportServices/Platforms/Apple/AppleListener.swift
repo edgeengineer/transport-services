@@ -218,16 +218,22 @@ public final class AppleListener: Listener, @unchecked Sendable {
         self.newConnectionLimit = value
     }
     
-    public func getNewConnectionLimit() async -> UInt? {
-        return newConnectionLimit
+    public var newConnectionLimit: UInt? {
+        get async {
+            return newConnectionLimit
+        }
     }
     
-    public func getAcceptedConnectionCount() async -> UInt {
-        return acceptedConnections
+    public var acceptedConnectionCount: UInt {
+        get async {
+            return acceptedConnections
+        }
     }
     
-    public func getProperties() async -> TransportProperties {
-        return preconnection.transportProperties
+    public var properties: TransportProperties {
+        get async {
+            return preconnection.transportProperties
+        }
     }
     
     // MARK: - Helper Methods
@@ -280,9 +286,21 @@ public final class AppleListener: Listener, @unchecked Sendable {
     }
     
     public func setNewConnectionLimit(_ value: UInt?) async {}
-    public func getNewConnectionLimit() async -> UInt? { nil }
-    public func getAcceptedConnectionCount() async -> UInt { 0 }
-    public func getProperties() async -> TransportProperties { preconnection.transportProperties }
+    public var newConnectionLimit: UInt? {
+        get async {
+            return nil
+        }
+    }
+    public var acceptedConnectionCount: UInt {
+        get async {
+            return 0
+        }
+    }
+    public var properties: TransportProperties {
+        get async {
+            return preconnection.transportProperties
+        }
+    }
 }
 
 #endif

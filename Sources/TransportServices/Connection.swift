@@ -16,7 +16,7 @@ import Foundation
 
 /// Represents an established or establishing transport connection
 /// Based on RFC 9622 Section 3
-public protocol Connection: AnyObject, Sendable {
+public protocol Connection: Sendable {
     /// The preconnection used to create this connection
     var preconnection: Preconnection { get }
     

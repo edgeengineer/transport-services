@@ -61,18 +61,24 @@ public final class LinuxListener: Listener, @unchecked Sendable {
         // TODO: Implement connection limit
     }
     
-    public func getNewConnectionLimit() async -> UInt? {
-        // TODO: Implement connection limit
-        return nil
+    public var newConnectionLimit: UInt? {
+        get async {
+            // TODO: Implement connection limit
+            return nil
+        }
     }
     
-    public func getAcceptedConnectionCount() async -> UInt {
-        // TODO: Implement connection counting
-        return 0
+    public var acceptedConnectionCount: UInt {
+        get async {
+            // TODO: Implement connection counting
+            return 0
+        }
     }
     
-    public func getProperties() async -> TransportProperties {
-        return preconnection.transportProperties
+    public var properties: TransportProperties {
+        get async {
+            return preconnection.transportProperties
+        }
     }
     
     public func listen() async throws {

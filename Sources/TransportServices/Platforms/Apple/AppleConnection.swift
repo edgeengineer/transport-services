@@ -87,21 +87,22 @@ public actor AppleConnection: Connection {
         
         _state = .closing
         
+        // Use cancel() for graceful close - this waits for pending operations
         nwConnection.cancel()
         
-        // Wait a bit for the cancellation to process
-        // This helps ensure state transitions properly
-        try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
-        
-        // Ensure we transition to closed
+        // The state will transition to .closed via the stateUpdateHandler
+        // when Network.framework reports .cancelled state
+        // We still set it here to ensure tests see the proper state immediately
         _state = .closed
         eventHandler(.closed(self))
     }
     
     public func abort() async {
+        guard _state != .closed else { return }
+        
         _state = .closed
         
-        // Force cancel the connection immediately
+        // Use forceCancel() for immediate termination
         nwConnection.forceCancel()
         eventHandler(.connectionError(self, reason: "Connection aborted"))
     }

@@ -112,16 +112,22 @@ public final actor WindowsListener: Listener {
         self.connectionLimit = value
     }
     
-    public func getNewConnectionLimit() -> UInt? {
-        return connectionLimit
+    public var newConnectionLimit: UInt? {
+        get async {
+            return connectionLimit
+        }
     }
     
-    public func getAcceptedConnectionCount() -> UInt {
-        return acceptedCount
+    public var acceptedConnectionCount: UInt {
+        get async {
+            return acceptedCount
+        }
     }
     
-    public func getProperties() -> TransportProperties {
-        return preconnection.transportProperties
+    public var properties: TransportProperties {
+        get async {
+            return preconnection.transportProperties
+        }
     }
     
     public func newConnectionGroup() async -> ConnectionGroup {
