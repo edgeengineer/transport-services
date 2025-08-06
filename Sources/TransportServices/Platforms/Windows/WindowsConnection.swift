@@ -480,12 +480,14 @@ public final actor WindowsConnection: Connection {
                     if error == WSA_IO_PENDING {
                         // I/O pending, will complete later
                         // In a real implementation, we'd wait for IOCP notification
+                        // Create an immutable copy to capture
+                        let bufferCopy = mutableBuffer
                         Task { @Sendable in
                             try await Task.sleep(nanoseconds: 10_000_000) // 10ms
                             // Note: In a real implementation, bytesReceived would be updated by IOCP
                             // For now, assume some data was received
                             let assumedBytesReceived = min(1024, bufferSize)
-                            let data = Data(mutableBuffer.prefix(assumedBytesReceived).map { UInt8(bitPattern: $0) })
+                            let data = Data(bufferCopy.prefix(assumedBytesReceived).map { UInt8(bitPattern: $0) })
                             let context = MessageContext()
                             continuation.resume(returning: (data, context))
                         }
