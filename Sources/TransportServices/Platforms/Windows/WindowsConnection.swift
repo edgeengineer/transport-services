@@ -402,56 +402,50 @@ public final actor WindowsConnection: Connection {
     private func sendOverlapped(data: Data) async throws {
         // Implement overlapped send using IOCP
         // This is a simplified version
+        // Convert data to array to ensure it persists through the async operation
+        let dataArray = Array(data)
+        
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            // Create WSABUF
             var wsaBuf = WSABUF()
-            data.withUnsafeBytes { buffer in
-                wsaBuf.len = ULONG(buffer.count)
-                wsaBuf.buf = UnsafeMutablePointer(mutating: buffer.bindMemory(to: CChar.self).baseAddress)
-                
-                // Create overlapped structure
-                var overlapped = OVERLAPPED()
-                var bytesSent: DWORD = 0
-                
-                let result = WSASend(
-                    socket,
-                    &wsaBuf,
-                    1,
-                    &bytesSent,
-                    0,
-                    &overlapped,
-                    nil
-                )
-                
-                if result == SOCKET_ERROR {
-                    let error = WindowsCompat.getLastSocketError()
-                    if error == WSA_IO_PENDING {
-                        // I/O pending, will complete later
-                        continuation.resume()
-                    } else {
-                        continuation.resume(throwing: WindowsTransportError.sendFailed(error))
-                    }
-                } else {
+            wsaBuf.len = ULONG(dataArray.count)
+            wsaBuf.buf = UnsafeMutablePointer(mutating: dataArray)
+            
+            // Create overlapped structure
+            var overlapped = OVERLAPPED()
+            var bytesSent: DWORD = 0
+            
+            let result = WSASend(
+                socket,
+                &wsaBuf,
+                1,
+                &bytesSent,
+                0,
+                &overlapped,
+                nil
+            )
+            
+            if result == SOCKET_ERROR {
+                let error = WindowsCompat.getLastSocketError()
+                if error == WSA_IO_PENDING {
+                    // I/O pending, will complete later
                     continuation.resume()
+                } else {
+                    continuation.resume(throwing: WindowsTransportError.sendFailed(error))
                 }
+            } else {
+                continuation.resume()
             }
         }
     }
     
     private func receiveOverlapped(bufferSize: Int) async throws -> (Data, MessageContext) {
-        // Allocate a buffer that persists through the async operation
-        let buffer = UnsafeMutableBufferPointer<CChar>.allocate(capacity: bufferSize)
-        defer { buffer.deallocate() }
-        
-        // Initialize buffer
-        for i in 0..<bufferSize {
-            buffer[i] = 0
-        }
+        // Use a simpler approach for now that avoids the defer/async issue
+        var buffer = Array<CChar>(repeating: 0, count: bufferSize)
         
         return try await withCheckedThrowingContinuation { continuation in
             var wsaBuf = WSABUF()
             wsaBuf.len = ULONG(bufferSize)
-            wsaBuf.buf = buffer.baseAddress
+            wsaBuf.buf = UnsafeMutablePointer(&buffer)
             
             var overlapped = OVERLAPPED()
             var bytesReceived: DWORD = 0
@@ -474,7 +468,7 @@ public final actor WindowsConnection: Connection {
                     // In a real implementation, we'd wait for IOCP notification
                     Task {
                         try await Task.sleep(nanoseconds: 10_000_000) // 10ms
-                        let data = Data(bytes: buffer.baseAddress!, count: Int(bytesReceived))
+                        let data = Data(bytes: buffer, count: Int(bytesReceived))
                         let context = MessageContext()
                         continuation.resume(returning: (data, context))
                     }
@@ -482,7 +476,7 @@ public final actor WindowsConnection: Connection {
                     continuation.resume(throwing: WindowsTransportError.receiveFailed(error))
                 }
             } else {
-                let data = Data(bytes: buffer.baseAddress!, count: Int(bytesReceived))
+                let data = Data(bytes: buffer, count: Int(bytesReceived))
                 let context = MessageContext()
                 continuation.resume(returning: (data, context))
             }
