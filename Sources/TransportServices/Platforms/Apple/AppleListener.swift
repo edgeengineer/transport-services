@@ -246,7 +246,10 @@ public final class AppleListener: Listener, @unchecked Sendable {
         }
         
         // Configure TLS if security is enabled
-        if preconnection.securityParameters != nil {
+        // Check if any security parameters are configured
+        if preconnection.securityParameters.allowedSecurityProtocols != nil ||
+           preconnection.securityParameters.serverCertificate != nil ||
+           preconnection.securityParameters.clientCertificate != nil {
             let tlsOptions = NWProtocolTLS.Options()
             parameters.defaultProtocolStack.applicationProtocols.insert(tlsOptions, at: 0)
         }
