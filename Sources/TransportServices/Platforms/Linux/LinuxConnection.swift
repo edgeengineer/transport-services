@@ -44,21 +44,15 @@ public class LinuxConnection: Connection, @unchecked Sendable {
     internal var _state: ConnectionState = .establishing
     private var connectionContinuation: CheckedContinuation<Void, Error>?
     public var state: ConnectionState {
-        get async {
-            return _state
-        }
+        return _state
     }
     private var _group: ConnectionGroup?
     public var group: ConnectionGroup? {
-        get async {
-            return _group
-        }
+        return stateLock.withLock { _ in _group }
     }
     private var _properties: TransportProperties
     public var properties: TransportProperties {
-        get async {
-            return _properties
-        }
+        return _properties
     }
     
     // Buffer for partial messages
@@ -73,7 +67,7 @@ public class LinuxConnection: Connection, @unchecked Sendable {
     
     // MARK: - Connection Protocol Implementation
     
-    public func setGroup(_ group: ConnectionGroup?) async {
+    public func setGroup(_ group: ConnectionGroup?) {
         stateLock.withLock { _ in
             self._group = group
         }
@@ -173,18 +167,22 @@ public class LinuxConnection: Connection, @unchecked Sendable {
         }
     }
     
-    public func clone() async throws -> any Connection {
+    public func clone() throws -> any Connection {
         let newConnection = LinuxConnection(
             preconnection: preconnection,
             eventHandler: eventHandler
         )
         
-        if let group = await self.group {
-            await group.addConnection(newConnection)
-            await newConnection.setGroup(group)
+        if let group = self.group {
+            Task {
+                await group.addConnection(newConnection)
+            }
+            newConnection.setGroup(group)
         }
         
-        await newConnection.initiate()
+        Task {
+            await newConnection.initiate()
+        }
         
         return newConnection
     }
@@ -259,7 +257,7 @@ public class LinuxConnection: Connection, @unchecked Sendable {
     
     public func startReceiving(minIncompleteLength: Int?, maxLength: Int?) async {
         Task {
-            while await state == .established {
+            while state == .established {
                 do {
                     let _ = try await receive(
                         minIncompleteLength: minIncompleteLength,

@@ -10,100 +10,40 @@ import WinSDK
 import Foundation
 import Synchronization
 
-@usableFromInline
-internal final class UnsafeSendable<T>: @unchecked Sendable {
-    internal let value: UnsafeMutablePointer<T>
-
-    internal init(_ value: T) {
-        self.value = UnsafeMutablePointer<T>.allocate(capacity: 1)
-        self.value.initialize(to: value)
-    }
-
-    deinit {
-        value.deinitialize(count: 1)
-        value.deallocate()
-    }
-}
-
 /// Windows platform-specific connection implementation using Winsock2 and IOCP
-public final class WindowsConnection: Connection {
+public final class WindowsConnection: Connection, @unchecked Sendable {
     public let preconnection: Preconnection
     public nonisolated let eventHandler: @Sendable (TransportServicesEvent) -> Void
     
-    private let protectedState: Mutex<(
-        socket: SOCKET,
-        state: ConnectionState,
-        group: ConnectionGroup?,
-        properties: TransportProperties,
-        sendOverlapped: UnsafeSendable<OVERLAPPED?>?,
-        recvOverlapped: UnsafeSendable<OVERLAPPED?>?,
-        receiveBuffer: Data,
-        initialData: Data?
-    )>
-    
+    private let stateLock = Mutex<Void>(())
+    private var _socket: SOCKET = INVALID_SOCKET
     internal var socket: SOCKET {
-        get { protectedState.withLock { $0.socket } }
-        set { protectedState.withLock { $0.socket = newValue } }
+        get { stateLock.withLock { _ in _socket } }
+        set { stateLock.withLock { _ in _socket = newValue } }
     }
-    
-    public internal(set) var state: ConnectionState {
-        get { protectedState.withLock { $0.state } }
-        set { protectedState.withLock { $0.state = newValue } }
+    private var _state: ConnectionState = .establishing
+    public var state: ConnectionState {
+        get { stateLock.withLock { _ in _state } }
     }
-    
-    public private(set) var group: ConnectionGroup? {
-        get { protectedState.withLock { $0.group } }
-        set { protectedState.withLock { $0.group = newValue } }
+    private var _group: ConnectionGroup?
+    public var group: ConnectionGroup? {
+        get { stateLock.withLock { _ in _group } }
     }
-    
-    public private(set) var properties: TransportProperties {
-        get { protectedState.withLock { $0.properties } }
-        set { protectedState.withLock { $0.properties = newValue } }
+    private var _properties: TransportProperties
+    public var properties: TransportProperties {
+        get { stateLock.withLock { _ in _properties } }
     }
     
     // IOCP-specific data
-    private var sendOverlapped: OVERLAPPED? {
-        get { protectedState.withLock { $0.sendOverlapped?.value.pointee } }
-        set { protectedState.withLock {
-            if let newValue = newValue {
-                $0.sendOverlapped = UnsafeSendable(newValue)
-            } else {
-                $0.sendOverlapped = nil
-            }
-        }}
-    }
-    private var recvOverlapped: OVERLAPPED? {
-        get { protectedState.withLock { $0.recvOverlapped?.value.pointee } }
-        set { protectedState.withLock {
-            if let newValue = newValue {
-                $0.recvOverlapped = UnsafeSendable(newValue)
-            } else {
-                $0.recvOverlapped = nil
-            }
-        }}
-    }
-    private var receiveBuffer: Data {
-        get { protectedState.withLock { $0.receiveBuffer } }
-        set { protectedState.withLock { $0.receiveBuffer = newValue } }
-    }
+    private var sendOverlapped: OVERLAPPED?
+    private var recvOverlapped: OVERLAPPED?
+    private var receiveBuffer = Data()
     private let maxBufferSize = 65536
     
     public init(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
         self.preconnection = preconnection
         self.eventHandler = eventHandler
-        
-        self.protectedState = Mutex(
-            (
-                socket: INVALID_SOCKET,
-                state: .establishing,
-                group: nil,
-                properties: preconnection.transportProperties,
-                sendOverlapped: nil,
-                recvOverlapped: nil,
-                receiveBuffer: Data(),
-                initialData: nil
-            )
-        )
+        self._properties = preconnection.transportProperties
         
         // Initialize Winsock if not already done
         WindowsCompat.initializeWinsock()
@@ -112,7 +52,9 @@ public final class WindowsConnection: Connection {
     // MARK: - Connection Protocol Implementation
     
     public func setGroup(_ group: ConnectionGroup?) {
-        self.group = group
+        stateLock.withLock { _ in
+            self._group = group
+        }
     }
     
     // MARK: - Connection Lifecycle
@@ -121,21 +63,21 @@ public final class WindowsConnection: Connection {
     public func initiate() async {
         guard let remoteEndpoint = preconnection.remoteEndpoints.first else {
             eventHandler(.establishmentError(reason: "No remote endpoint specified"))
-            state = .closed
+            stateLock.withLock { _ in _state = .closed }
             return
         }
         
         do {
             // Create socket based on transport properties
             let family = WindowsCompat.AF_INET // TODO: Support IPv6
-            let socketType = properties.reliability == .require ? WindowsCompat.SOCK_STREAM : WindowsCompat.SOCK_DGRAM
-            let proto = properties.reliability == .require ? WindowsCompat.IPPROTO_TCP : WindowsCompat.IPPROTO_UDP
+            let socketType = _properties.reliability == .require ? WindowsCompat.SOCK_STREAM : WindowsCompat.SOCK_DGRAM
+            let proto = _properties.reliability == .require ? WindowsCompat.IPPROTO_TCP : WindowsCompat.IPPROTO_UDP
             
             guard let sock = WindowsCompat.socket(family: family, type: socketType, proto: proto) else {
                 throw WindowsTransportError.socketCreationFailed(WindowsCompat.getLastSocketError())
             }
             
-            self.socket = sock
+            stateLock.withLock { _ in self._socket = sock }
             
             // Set socket to non-blocking mode
             guard WindowsCompat.setNonBlocking(socket) else {
@@ -158,14 +100,16 @@ public final class WindowsConnection: Connection {
             // Connect to remote endpoint
             try await connectToRemoteEndpoint(remoteEndpoint)
             
-            state = .established
+            stateLock.withLock { _ in _state = .established }
             eventHandler(.ready(self))
             
         } catch {
-            state = .closed
-            if socket != INVALID_SOCKET {
-                closesocket(socket)
-                socket = INVALID_SOCKET
+            stateLock.withLock { _ in 
+                _state = .closed
+                if _socket != INVALID_SOCKET {
+                    closesocket(_socket)
+                    _socket = INVALID_SOCKET
+                }
             }
             eventHandler(.establishmentError(reason: error.localizedDescription))
             // Also send connectionError and closed events for test compatibility
@@ -175,33 +119,41 @@ public final class WindowsConnection: Connection {
     }
     
     public func close() {
-        guard state != .closed else { return }
-        
-        state = .closing
-        
-        if socket != INVALID_SOCKET {
-            // Graceful shutdown for TCP
-            if properties.reliability == .require {
-                shutdown(socket, WindowsCompat.SD_BOTH)
-            }
-            
-            closesocket(socket)
-            socket = INVALID_SOCKET
+        let shouldClose = stateLock.withLock { _ in
+            guard _state != .closed else { return false }
+            _state = .closing
+            return true
         }
         
-        state = .closed
+        guard shouldClose else { return }
+        
+        stateLock.withLock { _ in
+            if _socket != INVALID_SOCKET {
+                // Graceful shutdown for TCP
+                if _properties.reliability == .require {
+                    shutdown(_socket, WindowsCompat.SD_BOTH)
+                }
+                
+                closesocket(_socket)
+                _socket = INVALID_SOCKET
+            }
+            
+            _state = .closed
+        }
         eventHandler(.closed(self))
     }
     
     public func abort() {
         // Send abort event even if already closed for test compatibility
-        let wasAlreadyClosed = state == .closed
-        
-        state = .closed
-        
-        if socket != INVALID_SOCKET {
-            closesocket(socket)
-            socket = INVALID_SOCKET
+        let wasAlreadyClosed = stateLock.withLock { _ in
+            let wasClosed = _state == .closed
+            _state = .closed
+            
+            if _socket != INVALID_SOCKET {
+                closesocket(_socket)
+                _socket = INVALID_SOCKET
+            }
+            return wasClosed
         }
         
         // Always send the abort event
@@ -213,15 +165,17 @@ public final class WindowsConnection: Connection {
         }
     }
     
-    public func clone() async throws -> any Connection {
+    public func clone() throws -> any Connection {
         let newConnection = WindowsConnection(
             preconnection: preconnection,
             eventHandler: eventHandler
         )
         
-        if let group = self.group {
-            await group.addConnection(newConnection)
-            await newConnection.setGroup(group)
+        if let group = self._group {
+            Task {
+                await group.addConnection(newConnection)
+            }
+            newConnection.setGroup(group)
         }
         
         // Start initiation in background task
@@ -358,8 +312,10 @@ public final class WindowsConnection: Connection {
     
     /// Set an accepted socket directly (used by WindowsListener)
     public func setAcceptedSocket(_ acceptedSocket: SOCKET) {
-        self.socket = acceptedSocket
-        self.state = .established
+        stateLock.withLock { _ in
+            self._socket = acceptedSocket
+            self._state = .established
+        }
         
         // Associate with IOCP
         _ = EventLoop.associateSocket(socket, handler: { _ in })
@@ -367,23 +323,24 @@ public final class WindowsConnection: Connection {
     
     /// Configure for UDP with shared socket (used by WindowsListener)
     public func setUDPSocket(_ sharedSocket: SOCKET, remoteAddr: sockaddr_in) {
-        self.socket = sharedSocket
-        self.state = .established
+        stateLock.withLock { _ in
+            self._socket = sharedSocket
+            self._state = .established
+        }
         // Store remote address for UDP sends
         // Note: This would need proper implementation for UDP filtering
     }
     
     /// Mark connection as established and send ready event
     public func markEstablished() {
-        self.state = .established
+        stateLock.withLock { _ in
+            self._state = .established
+        }
         eventHandler(.ready(self))
     }
     
     /// Set initial data received (used for UDP connections)
-    private var initialData: Data? {
-        get { protectedState.withLock { $0.initialData } }
-        set { protectedState.withLock { $0.initialData = newValue } }
-    }
+    private var initialData: Data?
     public func setInitialData(_ data: Data) {
         self.initialData = data
     }
@@ -399,14 +356,14 @@ public final class WindowsConnection: Connection {
                   &reuseAddr, Int32(MemoryLayout<WindowsBool>.size))
         
         // Configure keep-alive if requested
-        if properties.keepAlive != .prohibit {
+        if _properties.keepAlive != .prohibit {
             var keepAlive = TRUE
             setsockopt(socket, WindowsCompat.SOL_SOCKET, WindowsCompat.SO_KEEPALIVE,
                       &keepAlive, Int32(MemoryLayout<WindowsBool>.size))
         }
         
         // Configure TCP nodelay for low latency
-        if properties.reliability == .require {
+        if _properties.reliability == .require {
             var nodelay = TRUE
             setsockopt(socket, Int32(IPPROTO_TCP.rawValue), WindowsCompat.TCP_NODELAY,
                       &nodelay, Int32(MemoryLayout<WindowsBool>.size))
@@ -471,7 +428,7 @@ public final class WindowsConnection: Connection {
             // Connection in progress, wait for completion
             // For TEST-NET addresses, simulate timeout
             if isTestNet {
-                try await Task.sleep(nanoseconds: UInt64((properties.connTimeout ?? 1.0) * 1_000_000_000))
+                try await Task.sleep(nanoseconds: UInt64((_properties.connTimeout ?? 1.0) * 1_000_000_000))
                 throw TransportServicesError.timedOut
             } else {
                 try await waitForConnection()
@@ -526,7 +483,7 @@ public final class WindowsConnection: Connection {
     
     private func waitForConnection() async throws {
         // Wait for connection completion with timeout
-        let timeout = properties.connTimeout ?? 30.0
+        let timeout = _properties.connTimeout ?? 30.0
         let startTime = Date()
         
         while Date().timeIntervalSince(startTime) < timeout {

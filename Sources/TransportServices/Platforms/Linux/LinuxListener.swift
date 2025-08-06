@@ -284,8 +284,8 @@ public final class LinuxListener: Listener, @unchecked Sendable {
         
         // Add to connection group if configured
         if let group = self.group {
-            await group.addConnection(connection)
-            await connection.setGroup(group)
+            group.addConnection(connection)
+            connection.setGroup(group)
         }
         
         // Initialize the connection
@@ -327,8 +327,8 @@ public final class LinuxListener: Listener, @unchecked Sendable {
             
             // Add to connection group if configured
             if let group = self.group {
-                await group.addConnection(connection)
-                await connection.setGroup(group)
+                group.addConnection(connection)
+                connection.setGroup(group)
             }
             
             await connection.markReady()

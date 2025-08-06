@@ -24,21 +24,15 @@ public final class AppleConnection: Connection {
     private let nwConnection: NWConnection
     private var _state: ConnectionState = .establishing
     public var state: ConnectionState {
-        get async {
-            return _state
-        }
+        return _state
     }
     private var _group: ConnectionGroup?
     public var group: ConnectionGroup? {
-        get async {
-            return _group
-        }
+        return _group
     }
     private var _properties: TransportProperties
     public var properties: TransportProperties {
-        get async {
-            return _properties
-        }
+        return _properties
     }
     
     public init(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
@@ -69,7 +63,7 @@ public final class AppleConnection: Connection {
     
 
     
-    public func setGroup(_ group: ConnectionGroup?) async {
+    public func setGroup(_ group: ConnectionGroup?) {
         self._group = group
     }
     
@@ -107,7 +101,7 @@ public final class AppleConnection: Connection {
         eventHandler(.connectionError(self, reason: "Connection aborted"))
     }
     
-    public func clone() async throws -> any Connection {
+    public func clone() throws -> any Connection {
         // Create new AppleConnection with same preconnection
         let newConnection = AppleConnection(
             preconnection: preconnection,
@@ -115,13 +109,17 @@ public final class AppleConnection: Connection {
         )
         
         // Copy connection group membership
-        if let group = await self.group {
-             await group.addConnection(newConnection)
-             await newConnection.setGroup(group)
-         }
+        if let group = self.group {
+            Task {
+                await group.addConnection(newConnection)
+            }
+            newConnection.setGroup(group)
+        }
         
         // Initiate the cloned connection
-        await newConnection.initiate()
+        Task {
+            await newConnection.initiate()
+        }
         
         return newConnection
     }
@@ -129,8 +127,7 @@ public final class AppleConnection: Connection {
     // MARK: - Data Transfer
     
     public func send(data: Data, context: MessageContext, endOfMessage: Bool) async throws {
-        let currentState = await state
-        guard currentState == .established else {
+        guard state == .established else {
             throw TransportServicesError.connectionClosed
         }
         
@@ -148,8 +145,7 @@ public final class AppleConnection: Connection {
     }
     
     public func receive(minIncompleteLength: Int?, maxLength: Int?) async throws -> (Data, MessageContext) {
-        let currentState = await state
-        guard currentState == .established else {
+        guard state == .established else {
             throw TransportServicesError.connectionClosed
         }
         
@@ -180,7 +176,7 @@ public final class AppleConnection: Connection {
     
     public func startReceiving(minIncompleteLength: Int?, maxLength: Int?) async {
         Task {
-            while await state == .established {
+            while state == .established {
                 do {
                     let _ = try await receive(
                         minIncompleteLength: minIncompleteLength,

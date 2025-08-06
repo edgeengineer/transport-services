@@ -298,13 +298,13 @@ struct ConnectionAdvancedTests {
                 try await preconnection.initiate()
             }
 
-            await conn1.setGroup(group)
-            await conn2.setGroup(group)
-            await group.addConnection(conn1)
-            await group.addConnection(conn2)
+            group.addConnection(conn1)
+            conn1.setGroup(group)
+            group.addConnection(conn2)
+            conn2.setGroup(group)
 
             // Verify group tracking
-            let count = await group.connectionCount
+            let count = group.connectionCount
             #expect(count >= 0)  // Can be 0 due to weak references
 
             // Clean up
@@ -334,8 +334,8 @@ struct ConnectionAdvancedTests {
                     [preconnection] in
                     try await preconnection.initiate()
                 }
-                await conn.setGroup(group)
-                await group.addConnection(conn)
+                conn.setGroup(group)
+                group.addConnection(conn)
                 connections.append(conn)
             } catch {
                 // Connection failures are expected for local address
@@ -378,8 +378,8 @@ struct ConnectionAdvancedTests {
             }
 
             // Add to group
-            await original.setGroup(group)
-            await group.addConnection(original)
+            group.addConnection(original)
+            original.setGroup(group)
 
             // Clone should inherit group
             let cloned = try await withTimeout(in: .seconds(3), clock: ContinuousClock()) {
@@ -387,7 +387,7 @@ struct ConnectionAdvancedTests {
             }
 
             // Verify cloned connection has the same group
-            let clonedGroup = await cloned.group
+            let clonedGroup = cloned.group
             #expect(clonedGroup != nil)
 
             // Clean up

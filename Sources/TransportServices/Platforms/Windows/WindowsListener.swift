@@ -241,16 +241,16 @@ public final actor WindowsListener: Listener {
         )
         
         // Set the socket directly on the connection
-        await connection.setAcceptedSocket(clientSocket)
+        connection.setAcceptedSocket(clientSocket)
         
         // Add to connection group if configured
         if let group = self.group {
-            await group.addConnection(connection)
-            await connection.setGroup(group)
+            group.addConnection(connection)
+            connection.setGroup(group)
         }
         
         // Mark as established and notify
-        await connection.markEstablished()
+        connection.markEstablished()
         
         // Increment accepted count
         acceptedCount += 1
@@ -285,20 +285,20 @@ public final actor WindowsListener: Listener {
             )
             
             // Configure for UDP with shared socket
-            await connection.setUDPSocket(listenSocket, remoteAddr: mutableAddr)
+            connection.setUDPSocket(listenSocket, remoteAddr: mutableAddr)
             
             // Add to connection group if configured
             if let group = self.group {
-                await group.addConnection(connection)
-                await connection.setGroup(group)
+                group.addConnection(connection)
+                connection.setGroup(group)
             }
             
             // Mark as established
-            await connection.markEstablished()
+            connection.markEstablished()
             
             // Store initial data for the first receive
             let data = Data(bytes: buffer, count: Int(bytesReceived))
-            await connection.setInitialData(data)
+            connection.setInitialData(data)
             
             acceptedCount += 1
             

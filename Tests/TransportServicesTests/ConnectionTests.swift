@@ -525,17 +525,17 @@ struct ConnectionTests {
         let group = ConnectionGroup()
 
         // Add connections to group
-        await connection1.setGroup(group)
-        await connection2.setGroup(group)
+        connection1.setGroup(group)
+        connection2.setGroup(group)
 
         // Verify connections have the group
-        let group1 = await connection1.group
-        let group2 = await connection2.group
+        let group1 = connection1.group
+        let group2 = connection2.group
         #expect(group1 != nil)
         #expect(group2 != nil)
 
         // Group should track connection count
-        let count = await group.connectionCount
+        let count = group.connectionCount
         #expect(count >= 0)  // We can't guarantee exact count due to weak references
 
         // Clean up

@@ -24,13 +24,16 @@ public protocol Connection: Sendable {
     var eventHandler: @Sendable (TransportServicesEvent) -> Void { get }
     
     /// Current state of the connection
-    var state: ConnectionState { get async }
+    var state: ConnectionState { get }
     
     /// Transport properties for this connection
-    var properties: TransportProperties { get async }
+    var properties: TransportProperties { get }
     
     /// The connection group this connection belongs to
-    var group: ConnectionGroup? { get async }
+    var group: ConnectionGroup? { get }
+    
+    /// Set the connection group
+    func setGroup(_ group: ConnectionGroup?)
     
     // MARK: - Connection Lifecycle
     
@@ -41,7 +44,7 @@ public protocol Connection: Sendable {
     func abort()
     
     /// Clone this connection to create a new connection with same properties
-    func clone() async throws -> any Connection
+    func clone() throws -> any Connection
     
     // MARK: - Data Transfer
     
@@ -67,11 +70,6 @@ public protocol Connection: Sendable {
     
     /// Remove local endpoints
     func removeLocal(_ localEndpoints: [LocalEndpoint])
-    
-    // MARK: - Connection Groups
-    
-    /// Set the connection group
-    func setGroup(_ group: ConnectionGroup?) async
 }
 
 /// Default implementations for Connection protocol

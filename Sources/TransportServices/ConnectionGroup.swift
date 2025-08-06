@@ -8,7 +8,7 @@ import Foundation
 #endif
 
 /// Represents a group of related connections
-public actor ConnectionGroup {
+public final class ConnectionGroup: @unchecked Sendable {
     private var connections: [any Connection] = []
     private weak var scheduler: ConnectionGroupScheduler?
     
@@ -47,15 +47,8 @@ public actor ConnectionGroup {
     
     /// Abort all connections in the group
     public func abortGroup() {
-        // Create a task to abort all connections concurrently
-        Task {
-        await withTaskGroup(of: Void.self) { taskGroup in
-            for connection in connections {
-                taskGroup.addTask {
-                    connection.abort()
-                }
+        for connection in connections {
+                 connection.abort()
             }
-        }
-        }
     }
 }
