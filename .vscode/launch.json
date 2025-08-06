@@ -4,36 +4,36 @@
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:taps-swift}",
+            "cwd": "${workspaceFolder:transport-services}",
             "name": "Debug SimpleServer",
-            "program": "${workspaceFolder:taps-swift}/.build/debug/SimpleServer",
+            "program": "${workspaceFolder:transport-services}/.build/debug/SimpleServer",
             "preLaunchTask": "swift: Build Debug SimpleServer"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:taps-swift}",
+            "cwd": "${workspaceFolder:transport-services}",
             "name": "Release SimpleServer",
-            "program": "${workspaceFolder:taps-swift}/.build/release/SimpleServer",
+            "program": "${workspaceFolder:transport-services}/.build/release/SimpleServer",
             "preLaunchTask": "swift: Build Release SimpleServer"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:taps-swift}",
+            "cwd": "${workspaceFolder:transport-services}",
             "name": "Debug SimpleClient",
-            "program": "${workspaceFolder:taps-swift}/.build/debug/SimpleClient",
+            "program": "${workspaceFolder:transport-services}/.build/debug/SimpleClient",
             "preLaunchTask": "swift: Build Debug SimpleClient"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:taps-swift}",
+            "cwd": "${workspaceFolder:transport-services}",
             "name": "Release SimpleClient",
-            "program": "${workspaceFolder:taps-swift}/.build/release/SimpleClient",
+            "program": "${workspaceFolder:transport-services}/.build/release/SimpleClient",
             "preLaunchTask": "swift: Build Release SimpleClient"
         }
     ]

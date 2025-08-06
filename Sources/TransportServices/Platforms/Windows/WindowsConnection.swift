@@ -455,6 +455,8 @@ public final actor WindowsConnection: Connection {
         return try await withCheckedThrowingContinuation { continuation in
             // Create a mutable copy for the withUnsafeMutableBufferPointer call
             var mutableBuffer = bufferHolder.buffer
+            // Create an immutable copy before entering the closure to avoid overlapping access
+            let bufferCopy = mutableBuffer
             
             mutableBuffer.withUnsafeMutableBufferPointer { bufferPointer in
                 var wsaBuf = WSABUF()
@@ -480,8 +482,6 @@ public final actor WindowsConnection: Connection {
                     if error == WSA_IO_PENDING {
                         // I/O pending, will complete later
                         // In a real implementation, we'd wait for IOCP notification
-                        // Create an immutable copy to capture
-                        let bufferCopy = mutableBuffer
                         Task { @Sendable in
                             try await Task.sleep(nanoseconds: 10_000_000) // 10ms
                             // Note: In a real implementation, bytesReceived would be updated by IOCP
@@ -495,7 +495,7 @@ public final actor WindowsConnection: Connection {
                         continuation.resume(throwing: WindowsTransportError.receiveFailed(error))
                     }
                 } else {
-                    let data = Data(mutableBuffer.prefix(Int(bytesReceived)).map { UInt8(bitPattern: $0) })
+                    let data = Data(bufferCopy.prefix(Int(bytesReceived)).map { UInt8(bitPattern: $0) })
                     let context = MessageContext()
                     continuation.resume(returning: (data, context))
                 }
