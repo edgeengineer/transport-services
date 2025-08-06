@@ -31,13 +31,13 @@ struct ConnectionTests {
             }
         }
         
-        // Connection to unreachable address should be in establishing, ready, or closed state
-        // Note: Some CI environments may route documentation addresses, leading to ready state
+        // Connection to unreachable address should be in establishing, established, or closed state
+        // Note: Some CI environments may route documentation addresses, leading to established state
         let initialState = await connection.state
-        #expect(initialState == .establishing || initialState == .ready || initialState == .closed)
+        #expect(initialState == .establishing || initialState == .established || initialState == .closed)
         
-        // If still establishing or ready, close it
-        if initialState == .establishing || initialState == .ready {
+        // If still establishing or established, close it
+        if initialState == .establishing || initialState == .established {
             await connection.close()
             try await connection.waitForState(.closed)
         }
