@@ -13,7 +13,7 @@ import Foundation
 internal final class WindowsEventLoop: @unchecked Sendable {
     private let iocpHandle: HANDLE
     private let running = AtomicBool(true)
-    private let thread: Thread
+    private var thread: Thread!
     private let pendingTasks = AtomicArray<() -> Void>()
     
     // Custom completion keys
@@ -35,7 +35,7 @@ internal final class WindowsEventLoop: @unchecked Sendable {
     init() {
         // Create I/O Completion Port
         self.iocpHandle = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nil, 0, 0)
-        guard self.iocpHandle != nil && self.iocpHandle != INVALID_HANDLE_VALUE else {
+        guard self.iocpHandle != INVALID_HANDLE_VALUE else {
             fatalError("Failed to create IOCP: \(GetLastError())")
         }
         

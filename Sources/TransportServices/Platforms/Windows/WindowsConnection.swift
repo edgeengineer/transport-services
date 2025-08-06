@@ -115,7 +115,7 @@ public final actor WindowsConnection: Connection {
     }
     
     nonisolated public func abort() {
-        Task {
+        Task { @Sendable in
             await self.abortInternal()
         }
     }
@@ -173,7 +173,7 @@ public final actor WindowsConnection: Connection {
                     let error = WindowsCompat.getLastSocketError()
                     if error == WSAEWOULDBLOCK {
                         // Would block, need to use overlapped I/O
-                        Task {
+                        Task { @Sendable in
                             do {
                                 try await sendOverlapped(data: data)
                                 continuation.resume()
@@ -238,7 +238,7 @@ public final actor WindowsConnection: Connection {
     }
     
     public func startReceiving(minIncompleteLength: Int?, maxLength: Int?) {
-        Task {
+        Task { @Sendable in
             while state == .established {
                 do {
                     let _ = try await receive(
@@ -469,7 +469,7 @@ public final actor WindowsConnection: Connection {
                     if error == WSA_IO_PENDING {
                         // I/O pending, will complete later
                         // In a real implementation, we'd wait for IOCP notification
-                        Task {
+                        Task { @Sendable in
                             try await Task.sleep(nanoseconds: 10_000_000) // 10ms
                             let data = Data(bytes: buffer, count: Int(bytesReceived))
                             let context = MessageContext()

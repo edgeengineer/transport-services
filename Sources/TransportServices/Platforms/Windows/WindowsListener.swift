@@ -350,7 +350,7 @@ public enum ListenerState: Sendable {
 
 // Windows-specific constants
 private let WSAEWOULDBLOCK = Int32(10035)
-private let SO_EXCLUSIVEADDRUSE = Int32(0xfffffffb)
+private let SO_EXCLUSIVEADDRUSE = Int32(-5)  // 0xfffffffb as signed Int32
 private let TRUE = WindowsBool(true)
 
 #endif
