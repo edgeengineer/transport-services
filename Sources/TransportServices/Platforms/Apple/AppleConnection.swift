@@ -83,9 +83,18 @@ public actor AppleConnection: Connection {
     }
     
     public func close() async {
+        guard _state != .closed else { return }
+        
         _state = .closing
         
         nwConnection.cancel()
+        
+        // Wait a bit for the cancellation to process
+        // This helps ensure state transitions properly
+        try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
+        
+        // Ensure we transition to closed
+        _state = .closed
         eventHandler(.closed(self))
     }
     

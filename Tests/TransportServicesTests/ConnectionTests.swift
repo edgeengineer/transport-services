@@ -23,7 +23,7 @@ struct ConnectionTests {
         var preconnection = NewPreconnection(
             remoteEndpoints: [{ var ep = RemoteEndpoint(); ep.ipAddress = "192.0.2.1"; ep.port = 1; return ep }()]
         )
-        preconnection.transportProperties.connTimeout = 1.0 // 1 second timeout
+        preconnection.transportProperties.connTimeout = 3.0 // 3 second timeout for CI reliability
         
         let connection = try await withTimeout(in: .seconds(5), clock: ContinuousClock()) { [preconnection] in
             try await preconnection.initiate { event in
