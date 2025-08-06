@@ -442,10 +442,21 @@ public final actor WindowsConnection: Connection {
     
     private func receiveOverlapped(bufferSize: Int) async throws -> (Data, MessageContext) {
         // Use a simpler approach for now that avoids the defer/async issue
-        var buffer = Array<CChar>(repeating: 0, count: bufferSize)
+        // Create buffer as heap-allocated class to avoid capture issues
+        class BufferHolder {
+            let buffer: [CChar]
+            init(size: Int) {
+                self.buffer = Array<CChar>(repeating: 0, count: size)
+            }
+        }
+        
+        let bufferHolder = BufferHolder(size: bufferSize)
         
         return try await withCheckedThrowingContinuation { continuation in
-            buffer.withUnsafeMutableBufferPointer { bufferPointer in
+            // Create a mutable copy for the withUnsafeMutableBufferPointer call
+            var mutableBuffer = bufferHolder.buffer
+            
+            mutableBuffer.withUnsafeMutableBufferPointer { bufferPointer in
                 var wsaBuf = WSABUF()
                 wsaBuf.len = ULONG(bufferSize)
                 wsaBuf.buf = bufferPointer.baseAddress
@@ -469,12 +480,12 @@ public final actor WindowsConnection: Connection {
                     if error == WSA_IO_PENDING {
                         // I/O pending, will complete later
                         // In a real implementation, we'd wait for IOCP notification
-                        // Capture values before the async task
-                        let capturedBuffer = buffer
-                        let capturedBytesReceived = bytesReceived
                         Task { @Sendable in
                             try await Task.sleep(nanoseconds: 10_000_000) // 10ms
-                            let data = Data(bytes: capturedBuffer, count: Int(capturedBytesReceived))
+                            // Note: In a real implementation, bytesReceived would be updated by IOCP
+                            // For now, assume some data was received
+                            let assumedBytesReceived = min(1024, bufferSize)
+                            let data = Data(mutableBuffer.prefix(assumedBytesReceived))
                             let context = MessageContext()
                             continuation.resume(returning: (data, context))
                         }
@@ -482,7 +493,7 @@ public final actor WindowsConnection: Connection {
                         continuation.resume(throwing: WindowsTransportError.receiveFailed(error))
                     }
                 } else {
-                    let data = Data(bytes: buffer, count: Int(bytesReceived))
+                    let data = Data(mutableBuffer.prefix(Int(bytesReceived)))
                     let context = MessageContext()
                     continuation.resume(returning: (data, context))
                 }
