@@ -34,12 +34,14 @@ let package = Package(
             name: "SimpleServer",
             dependencies: ["TransportServices"],
             path: "Examples",
+            exclude: ["WindowsTest.swift", "SimpleClient.swift"],
             sources: ["SimpleServer.swift"]
         ),
         .executableTarget(
             name: "SimpleClient",
             dependencies: ["TransportServices"],
             path: "Examples",
+            exclude: ["WindowsTest.swift", "SimpleServer.swift"],
             sources: ["SimpleClient.swift"]
         ),
         .testTarget(

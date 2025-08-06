@@ -213,7 +213,9 @@ public struct LinuxPreconnection: Preconnection {
                 var ipBuffer = Array<CChar>(repeating: 0, count: Int(INET_ADDRSTRLEN))
                 var mutableAddr = sockaddrIn.sin_addr
                 if inet_ntop(AF_INET, &mutableAddr, &ipBuffer, socklen_t(INET_ADDRSTRLEN)) != nil {
-                    let address = String(cString: ipBuffer)
+                    let validLength = ipBuffer.firstIndex(of: 0) ?? ipBuffer.count
+                    let uint8Buffer = ipBuffer[..<validLength].map { UInt8(bitPattern: $0) }
+                    let address = String(decoding: uint8Buffer, as: UTF8.self)
                     interfaces.append((name: name, address: address))
                 }
             }
@@ -253,7 +255,9 @@ public struct LinuxPreconnection: Preconnection {
                         var ipBuffer = Array<CChar>(repeating: 0, count: Int(INET_ADDRSTRLEN))
                         var mutableAddr = sockaddrIn.sin_addr
                         if inet_ntop(AF_INET, &mutableAddr, &ipBuffer, socklen_t(INET_ADDRSTRLEN)) != nil {
-                            addresses.append(String(cString: ipBuffer))
+                            let validLength = ipBuffer.firstIndex(of: 0) ?? ipBuffer.count
+                            let uint8Buffer = ipBuffer[..<validLength].map { UInt8(bitPattern: $0) }
+                            addresses.append(String(decoding: uint8Buffer, as: UTF8.self))
                         }
                     }
                     current = addr.pointee.ai_next

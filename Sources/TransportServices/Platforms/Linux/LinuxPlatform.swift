@@ -192,7 +192,9 @@ public final class LinuxPlatform: Platform {
                                 var ipBuffer = Array<CChar>(repeating: 0, count: Int(INET_ADDRSTRLEN))
                                 var mutableAddr = sockaddrIn.sin_addr
                                 if inet_ntop(AF_INET, &mutableAddr, &ipBuffer, socklen_t(INET_ADDRSTRLEN)) != nil {
-                                    let address = String(cString: ipBuffer)
+                                    let validLength = ipBuffer.firstIndex(of: 0) ?? ipBuffer.count
+                                    let uint8Buffer = ipBuffer[..<validLength].map { UInt8(bitPattern: $0) }
+                                    let address = String(decoding: uint8Buffer, as: UTF8.self)
                                     let port = UInt16(bigEndian: sockaddrIn.sin_port)
                                     socketAddresses.append(.ipv4(address: address, port: port))
                                 }
@@ -202,7 +204,9 @@ public final class LinuxPlatform: Platform {
                                 var ipBuffer = Array<CChar>(repeating: 0, count: Int(INET6_ADDRSTRLEN))
                                 var mutableAddr = sockaddrIn6.sin6_addr
                                 if inet_ntop(AF_INET6, &mutableAddr, &ipBuffer, socklen_t(INET6_ADDRSTRLEN)) != nil {
-                                    let address = String(cString: ipBuffer)
+                                    let validLength = ipBuffer.firstIndex(of: 0) ?? ipBuffer.count
+                                    let uint8Buffer = ipBuffer[..<validLength].map { UInt8(bitPattern: $0) }
+                                    let address = String(decoding: uint8Buffer, as: UTF8.self)
                                     let port = UInt16(bigEndian: sockaddrIn6.sin6_port)
                                     let scopeId = sockaddrIn6.sin6_scope_id
                                     socketAddresses.append(.ipv6(address: address, port: port, scopeId: scopeId))

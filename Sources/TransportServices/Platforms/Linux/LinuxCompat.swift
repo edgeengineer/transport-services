@@ -94,7 +94,9 @@ internal struct LinuxCompat {
         _ = strerror_r(errno, &buffer, buffer.count)
         // Find the null terminator
         let validLength = buffer.firstIndex(of: 0) ?? buffer.count
-        return String(decoding: buffer[..<validLength], as: UTF8.self)
+        // Convert CChar (Int8) to UInt8 for UTF8 decoding
+        let uint8Buffer = buffer[..<validLength].map { UInt8(bitPattern: $0) }
+        return String(decoding: uint8Buffer, as: UTF8.self)
         #endif
     }
     
