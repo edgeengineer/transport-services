@@ -308,22 +308,22 @@ public final actor WindowsConnection: Connection {
         guard socket != INVALID_SOCKET else { return }
         
         // Enable SO_REUSEADDR
-        var reuseAddr: WinSDK.BOOL = TRUE
+        var reuseAddr = TRUE
         setsockopt(socket, WindowsCompat.SOL_SOCKET, WindowsCompat.SO_REUSEADDR,
-                  &reuseAddr, Int32(MemoryLayout<WinSDK.BOOL>.size))
+                  &reuseAddr, Int32(MemoryLayout<WindowsBool>.size))
         
         // Configure keep-alive if requested
         if properties.keepAlive != .prohibit {
-            var keepAlive: WinSDK.BOOL = TRUE
+            var keepAlive = TRUE
             setsockopt(socket, WindowsCompat.SOL_SOCKET, WindowsCompat.SO_KEEPALIVE,
-                      &keepAlive, Int32(MemoryLayout<WinSDK.BOOL>.size))
+                      &keepAlive, Int32(MemoryLayout<WindowsBool>.size))
         }
         
         // Configure TCP nodelay for low latency
         if properties.reliability == .require {
-            var nodelay: WinSDK.BOOL = TRUE
+            var nodelay = TRUE
             setsockopt(socket, Int32(IPPROTO_TCP.rawValue), WindowsCompat.TCP_NODELAY,
-                      &nodelay, Int32(MemoryLayout<WinSDK.BOOL>.size))
+                      &nodelay, Int32(MemoryLayout<WindowsBool>.size))
         }
     }
     
@@ -439,47 +439,52 @@ public final actor WindowsConnection: Connection {
     }
     
     private func receiveOverlapped(bufferSize: Int) async throws -> (Data, MessageContext) {
-        var buffer = Array<CChar>(repeating: 0, count: bufferSize)
+        // Allocate a buffer that persists through the async operation
+        let buffer = UnsafeMutableBufferPointer<CChar>.allocate(capacity: bufferSize)
+        defer { buffer.deallocate() }
         
-        return try await buffer.withUnsafeMutableBufferPointer { bufferPtr in
-            try await withCheckedThrowingContinuation { continuation in
-                var wsaBuf = WSABUF()
-                wsaBuf.len = ULONG(bufferSize)
-                wsaBuf.buf = bufferPtr.baseAddress
-                
-                var overlapped = OVERLAPPED()
-                var bytesReceived: DWORD = 0
-                var flags: DWORD = 0
-                
-                let result = WSARecv(
-                    socket,
-                    &wsaBuf,
-                    1,
-                    &bytesReceived,
-                    &flags,
-                    &overlapped,
-                    nil
-                )
-                
-                if result == SOCKET_ERROR {
-                    let error = WindowsCompat.getLastSocketError()
-                    if error == WSA_IO_PENDING {
-                        // I/O pending, will complete later
-                        // In a real implementation, we'd wait for IOCP notification
-                        Task {
-                            try await Task.sleep(nanoseconds: 10_000_000) // 10ms
-                            let data = Data(bytes: bufferPtr.baseAddress!, count: Int(bytesReceived))
-                            let context = MessageContext()
-                            continuation.resume(returning: (data, context))
-                        }
-                    } else {
-                        continuation.resume(throwing: WindowsTransportError.receiveFailed(error))
+        // Initialize buffer
+        for i in 0..<bufferSize {
+            buffer[i] = 0
+        }
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            var wsaBuf = WSABUF()
+            wsaBuf.len = ULONG(bufferSize)
+            wsaBuf.buf = buffer.baseAddress
+            
+            var overlapped = OVERLAPPED()
+            var bytesReceived: DWORD = 0
+            var flags: DWORD = 0
+            
+            let result = WSARecv(
+                socket,
+                &wsaBuf,
+                1,
+                &bytesReceived,
+                &flags,
+                &overlapped,
+                nil
+            )
+            
+            if result == SOCKET_ERROR {
+                let error = WindowsCompat.getLastSocketError()
+                if error == WSA_IO_PENDING {
+                    // I/O pending, will complete later
+                    // In a real implementation, we'd wait for IOCP notification
+                    Task {
+                        try await Task.sleep(nanoseconds: 10_000_000) // 10ms
+                        let data = Data(bytes: buffer.baseAddress!, count: Int(bytesReceived))
+                        let context = MessageContext()
+                        continuation.resume(returning: (data, context))
                     }
                 } else {
-                    let data = Data(bytes: bufferPtr.baseAddress!, count: Int(bytesReceived))
-                    let context = MessageContext()
-                    continuation.resume(returning: (data, context))
+                    continuation.resume(throwing: WindowsTransportError.receiveFailed(error))
                 }
+            } else {
+                let data = Data(bytes: buffer.baseAddress!, count: Int(bytesReceived))
+                let context = MessageContext()
+                continuation.resume(returning: (data, context))
             }
         }
     }
@@ -488,7 +493,7 @@ public final actor WindowsConnection: Connection {
 // Windows-specific constants
 private let WSAEWOULDBLOCK = Int32(10035)
 private let WSA_IO_PENDING = Int32(997)
-private let TRUE = WinSDK.BOOL(1)
-private let FALSE = WinSDK.BOOL(0)
+private let TRUE = WindowsBool(true)
+private let FALSE = WindowsBool(false)
 
 #endif

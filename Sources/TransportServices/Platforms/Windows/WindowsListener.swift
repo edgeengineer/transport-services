@@ -136,14 +136,14 @@ public final actor WindowsListener: Listener {
         guard listenSocket != INVALID_SOCKET else { return }
         
         // Enable SO_REUSEADDR to allow quick restart
-        var reuseAddr: BOOL = TRUE
+        var reuseAddr = TRUE
         setsockopt(listenSocket, WindowsCompat.SOL_SOCKET, WindowsCompat.SO_REUSEADDR,
-                  &reuseAddr, Int32(MemoryLayout<BOOL>.size))
+                  &reuseAddr, Int32(MemoryLayout<WindowsBool>.size))
         
         // Enable SO_EXCLUSIVEADDRUSE on Windows for security
-        var exclusive: BOOL = TRUE
+        var exclusive = TRUE
         setsockopt(listenSocket, WindowsCompat.SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
-                  &exclusive, Int32(MemoryLayout<BOOL>.size))
+                  &exclusive, Int32(MemoryLayout<WindowsBool>.size))
     }
     
     private func bindToLocalEndpoint(_ endpoint: LocalEndpoint) throws {
@@ -348,6 +348,6 @@ public enum ListenerState: Sendable {
 // Windows-specific constants
 private let WSAEWOULDBLOCK = Int32(10035)
 private let SO_EXCLUSIVEADDRUSE = Int32(0xfffffffb)
-private let TRUE = WinSDK.BOOL(1)
+private let TRUE = WindowsBool(true)
 
 #endif

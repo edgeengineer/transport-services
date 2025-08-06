@@ -324,7 +324,12 @@ internal struct WindowsCompat {
                 )
                 interfaces.append(networkInterface)
                 
-                adapter = currentAdapter.pointee.Next
+                // Convert UnsafePointer to UnsafeMutablePointer
+                if let next = currentAdapter.pointee.Next {
+                    adapter = UnsafeMutablePointer(mutating: next)
+                } else {
+                    adapter = nil
+                }
             }
         }
         
