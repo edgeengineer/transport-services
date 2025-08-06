@@ -71,7 +71,7 @@ internal final class WindowsEventLoop: @unchecked Sendable {
                 INFINITE
             )
             
-            if result == WindowsBool(false) {
+            if Bool(result) == false {
                 let error = GetLastError()
                 if error == ERROR_ABANDONED_WAIT_0 {
                     // IOCP handle was closed

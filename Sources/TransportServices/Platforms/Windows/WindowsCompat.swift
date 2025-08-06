@@ -255,7 +255,7 @@ internal struct WindowsCompat {
         
         // Parse the adapter information
         buffer.withUnsafeBytes { ptr in
-            var adapter = ptr.bindMemory(to: IP_ADAPTER_ADDRESSES.self).baseAddress
+            var adapter: UnsafePointer<IP_ADAPTER_ADDRESSES>? = ptr.bindMemory(to: IP_ADAPTER_ADDRESSES.self).baseAddress
             
             while let currentAdapter = adapter {
                 let name = String(cString: currentAdapter.pointee.AdapterName)
@@ -324,12 +324,7 @@ internal struct WindowsCompat {
                 )
                 interfaces.append(networkInterface)
                 
-                // Convert UnsafePointer to UnsafeMutablePointer
-                if let next = currentAdapter.pointee.Next {
-                    adapter = UnsafeMutablePointer(mutating: next)
-                } else {
-                    adapter = nil
-                }
+                adapter = currentAdapter.pointee.Next
             }
         }
         

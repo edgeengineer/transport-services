@@ -75,7 +75,7 @@ public final actor WindowsListener: Listener {
                     await self?.acceptConnections()
                 }
             }) else {
-                throw WindowsTransportError.iocpError(GetLastError())
+                throw WindowsTransportError.iocpError(Int32(GetLastError()))
             }
             
             state = .ready
@@ -304,8 +304,11 @@ public final actor WindowsListener: Listener {
         let endpoint = RemoteEndpoint()
         
         // Convert IP address to string
-        if let ip = WindowsCompat.ipToString(family: WindowsCompat.AF_INET, addr: &addr.sin_addr) {
-            endpoint.ipAddress = ip
+        var mutableAddr = addr
+        withUnsafePointer(to: &mutableAddr.sin_addr) { ptr in
+            if let ip = WindowsCompat.ipToString(family: WindowsCompat.AF_INET, addr: ptr) {
+                endpoint.ipAddress = ip
+            }
         }
         
         // Convert port
