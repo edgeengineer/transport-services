@@ -26,7 +26,7 @@ public final class AppleListener: Listener, @unchecked Sendable {
     private let connectionQueue = DispatchQueue(label: "listener.connections")
     private var isListening = false
     private var acceptTask: Task<Void, Never>?
-    private var newConnectionLimit: UInt?
+    private var _newConnectionLimit: UInt?
     private var acceptedConnections: UInt = 0
     
     init(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) throws {
@@ -176,7 +176,7 @@ public final class AppleListener: Listener, @unchecked Sendable {
     private func acceptLoop() async {
         while isListening && !Task.isCancelled {
             // Check connection limit
-            if let limit = newConnectionLimit, acceptedConnections >= limit {
+            if let limit = await newConnectionLimit, acceptedConnections >= limit {
                 // Stop accepting new connections
                 break
             }
@@ -207,7 +207,7 @@ public final class AppleListener: Listener, @unchecked Sendable {
         
         // If we exited the loop due to connection limit, keep the listener active
         // but stop accepting new connections
-        if let limit = newConnectionLimit, acceptedConnections >= limit {
+        if let limit = await newConnectionLimit, acceptedConnections >= limit {
             // Connection limit reached
         }
     }
@@ -215,12 +215,12 @@ public final class AppleListener: Listener, @unchecked Sendable {
     // MARK: - Listener Protocol Implementation
     
     public func setNewConnectionLimit(_ value: UInt?) async {
-        self.newConnectionLimit = value
+        self._newConnectionLimit = value
     }
     
     public var newConnectionLimit: UInt? {
         get async {
-            return newConnectionLimit
+            return _newConnectionLimit
         }
     }
     

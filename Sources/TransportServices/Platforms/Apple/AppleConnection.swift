@@ -15,30 +15,31 @@ import Foundation
 
 #if canImport(Network)
 import Network
+import Synchronization
 
 /// Apple platform-specific connection implementation using Network.framework
-public final class AppleConnection: Connection {
+public final class AppleConnection: Connection, @unchecked Sendable {
     public let preconnection: Preconnection
     public let eventHandler: @Sendable (TransportServicesEvent) -> Void
     
     private let nwConnection: NWConnection
-    private var _state: ConnectionState = .establishing
+    private let stateMutex = Mutex<ConnectionState>(.establishing)
     public var state: ConnectionState {
-        return _state
+        stateMutex.withLock { $0 }
     }
-    private var _group: ConnectionGroup?
+    private let groupMutex = Mutex<ConnectionGroup?>(nil)
     public var group: ConnectionGroup? {
-        return _group
+        groupMutex.withLock { $0 }
     }
-    private var _properties: TransportProperties
+    private let propertiesMutex: Mutex<TransportProperties>
     public var properties: TransportProperties {
-        return _properties
+        propertiesMutex.withLock { $0 }
     }
     
     public init(preconnection: Preconnection, eventHandler: @escaping @Sendable (TransportServicesEvent) -> Void) {
         self.preconnection = preconnection
         self.eventHandler = eventHandler
-        self._properties = preconnection.transportProperties
+        self.propertiesMutex = Mutex(preconnection.transportProperties)
         
         // Create NWParameters based on preconnection properties
         let parameters = AppleConnection.createParameters(from: preconnection)
@@ -56,7 +57,7 @@ public final class AppleConnection: Connection {
         self.nwConnection = nwConnection
         self.preconnection = preconnection
         self.eventHandler = eventHandler
-        self._properties = preconnection.transportProperties
+        self.propertiesMutex = Mutex(preconnection.transportProperties)
     }
     
     // MARK: - Connection Protocol Implementation
@@ -64,22 +65,30 @@ public final class AppleConnection: Connection {
 
     
     public func setGroup(_ group: ConnectionGroup?) {
-        self._group = group
+        groupMutex.withLock { currentGroup in
+            currentGroup = group
+        }
     }
     
     // MARK: - Connection Lifecycle
     
     public func initiate() async {
         nwConnection.stateUpdateHandler = { [weak self] newState in
-            Task { await self?.handleStateUpdate(newState) }
+            self?.handleStateUpdate(newState)
         }
         nwConnection.start(queue: .global())
     }
     
     public func close() {
-        guard _state != .closed else { return }
+        let shouldClose = stateMutex.withLock { currentState in
+            guard currentState != .closed else {
+                return false
+            }
+            currentState = .closing
+            return true
+        }
         
-        _state = .closing
+        guard shouldClose else { return }
         
         // Use cancel() for graceful close - this waits for pending operations
         nwConnection.cancel()
@@ -87,14 +96,22 @@ public final class AppleConnection: Connection {
         // The state will transition to .closed via the stateUpdateHandler
         // when Network.framework reports .cancelled state
         // We still set it here to ensure tests see the proper state immediately
-        _state = .closed
+        stateMutex.withLock { currentState in
+            currentState = .closed
+        }
         eventHandler(.closed(self))
     }
     
     public func abort() {
-        guard _state != .closed else { return }
+        let shouldAbort = stateMutex.withLock { currentState in
+            guard currentState != .closed else {
+                return false
+            }
+            currentState = .closed
+            return true
+        }
         
-        _state = .closed
+        guard shouldAbort else { return }
         
         // Use forceCancel() for immediate termination
         nwConnection.forceCancel()
@@ -111,7 +128,7 @@ public final class AppleConnection: Connection {
         // Copy connection group membership
         if let group = self.group {
             Task {
-                await group.addConnection(newConnection)
+                group.addConnection(newConnection)
             }
             newConnection.setGroup(group)
         }
@@ -217,20 +234,30 @@ public final class AppleConnection: Connection {
     private func handleStateUpdate(_ newState: NWConnection.State) {
         switch newState {
         case .ready:
-            self._state = .established
+            stateMutex.withLock { currentState in
+                currentState = .established
+            }
             eventHandler(.ready(self))
         case .failed(let error):
-            self._state = .closed
+            stateMutex.withLock { currentState in
+                currentState = .closed
+            }
             eventHandler(.connectionError(self, reason: error.localizedDescription))
         case .cancelled:
-            self._state = .closed
+            stateMutex.withLock { currentState in
+                currentState = .closed
+            }
             eventHandler(.closed(self))
         case .waiting(let error):
             eventHandler(.connectionError(self, reason: error.localizedDescription))
         case .preparing:
-            self._state = .establishing
+            stateMutex.withLock { currentState in
+                currentState = .establishing
+            }
         case .setup:
-            self._state = .establishing
+            stateMutex.withLock { currentState in
+                currentState = .establishing
+            }
         @unknown default:
             break
         }
